@@ -14,6 +14,12 @@ assigned to active members, filtered through My Work, archived/restored by
 authorized roles, and permanently deleted by admins. The profile menu can switch
 demo identities so every permission level is easy to test.
 
+Projects are database-backed workspace entities with owners, members, colors,
+descriptions, task counts, archive/restore, and guarded deletion. Tasks and
+assignees use normalized foreign keys; project-specific custom columns no longer
+leak between projects. See [requirements](docs/REQUIREMENTS.md),
+[architecture](docs/ARCHITECTURE.md), and the [ERD](docs/ERD.md).
+
 ## Run locally
 
 ```bash

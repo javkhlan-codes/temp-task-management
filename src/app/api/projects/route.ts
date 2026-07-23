@@ -29,7 +29,7 @@ function toIso(value: string | Date | null) {
   return value instanceof Date ? value.toISOString() : String(value);
 }
 
-export function rowToProject(row: ProjectRow): Project {
+function rowToProject(row: ProjectRow): Project {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
