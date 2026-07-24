@@ -23,10 +23,10 @@ Neon, and scope every mutation by `workspace_id`.
 
 ## Workspace authorization
 
-The current demo switcher supplies a user id through the session adapter. The
-adapter resolves the user's stored workspace membership before any mutation. A
-production deployment replaces only the identity source with Auth.js or Clerk;
-repository scoping and permission checks remain unchanged.
+The session adapter resolves an opaque HttpOnly cookie through the
+`auth_sessions` table, then loads the user's active workspace membership before
+any mutation. Development retains an explicit header adapter for local role
+testing; production authorization accepts the server session only.
 
 Authorization occurs in this order:
 
@@ -48,6 +48,10 @@ Authorization occurs in this order:
 - `PATCH/DELETE /api/users/:id`: update role/profile or deactivate membership.
 - `GET/POST /api/columns?projectId=`: list or create project columns.
 - `PATCH/DELETE /api/columns/:id`: configure or remove a project column.
+- `POST /api/auth/signup`: create a Member account and session.
+- `POST /api/auth/login`: verify a password and create a session.
+- `GET /api/auth/session`: restore the signed-in user.
+- `POST /api/auth/logout`: revoke the current session.
 
 Error semantics are consistent: `400` invalid input, `401` missing identity,
 `403` disallowed role/scope, `404` missing scoped entity, and `409` integrity
@@ -67,3 +71,12 @@ Migration `002_normalized_workspace.sql` is additive:
 6. Keep legacy columns temporarily for rollback compatibility.
 
 No table or user data is dropped by the migration.
+
+Migration `003_task_collaboration.sql` adds a self-referencing task parent for
+one-level subtask nesting and a normalized `task_assignees` join table. Existing
+single-owner tasks are backfilled into the join table without removing their
+legacy primary-assignee fields.
+
+Migration `004_authentication.sql` adds scrypt password credentials and
+server-side session records. Raw passwords and raw session tokens are never
+stored in the database.

@@ -66,6 +66,8 @@ export type Task = {
   status: TaskStatus;
   priority: TaskPriority;
   assignee: Person;
+  assignees?: Person[];
+  parentId?: string | null;
   dueDate: string;
   tags: string[];
   progress: number;

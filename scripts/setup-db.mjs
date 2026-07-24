@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import { randomBytes, scryptSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 if (!process.env.DATABASE_URL) {
@@ -163,15 +164,42 @@ const defaultColumns = [
   },
 ];
 
+const normalizedColumns = await sql`
+  SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'custom_columns'
+      AND column_name = 'project_id'
+  ) AS exists
+`;
+
 for (const column of defaultColumns) {
-  await sql`
-    INSERT INTO custom_columns (id, name, type, options, created_at)
-    VALUES (
-      ${column.id}, ${column.name}, ${column.type},
-      ${JSON.stringify(column.options)}::jsonb, ${column.createdAt}::timestamptz
-    )
-    ON CONFLICT (id) DO NOTHING
-  `;
+  if (normalizedColumns[0].exists) {
+    await sql`
+      INSERT INTO custom_columns (
+        id, project_id, name, type, options, created_at
+      )
+      SELECT
+        ${column.id}, projects.id, ${column.name}, ${column.type},
+        ${JSON.stringify(column.options)}::jsonb,
+        ${column.createdAt}::timestamptz
+      FROM projects
+      WHERE projects.workspace_id = 'workspace-acme'
+        AND projects.name = 'Product launch'
+      ON CONFLICT (id) DO NOTHING
+    `;
+  } else {
+    await sql`
+      INSERT INTO custom_columns (id, name, type, options, created_at)
+      VALUES (
+        ${column.id}, ${column.name}, ${column.type},
+        ${JSON.stringify(column.options)}::jsonb,
+        ${column.createdAt}::timestamptz
+      )
+      ON CONFLICT (id) DO NOTHING
+    `;
+  }
 }
 
 const rows = await sql`SELECT COUNT(*)::int AS count FROM tasks`;
@@ -375,4 +403,127 @@ function splitSqlStatements(source) {
 for (const statement of splitSqlStatements(normalizedMigration)) {
   await sql(statement);
 }
-console.log("Normalized workspace/project migration is applied.");
+const collaborationMigration = readFileSync(
+  new URL("../db/migrations/003_task_collaboration.sql", import.meta.url),
+  "utf8",
+);
+
+for (const statement of splitSqlStatements(collaborationMigration)) {
+  await sql(statement);
+}
+
+const authenticationMigration = readFileSync(
+  new URL("../db/migrations/004_authentication.sql", import.meta.url),
+  "utf8",
+);
+
+for (const statement of splitSqlStatements(authenticationMigration)) {
+  await sql(statement);
+}
+
+function hashDemoPassword(password) {
+  const salt = randomBytes(16).toString("hex");
+  const derived = scryptSync(password, salt, 64);
+  return `scrypt$${salt}$${derived.toString("hex")}`;
+}
+
+for (const user of defaultUsers) {
+  await sql`
+    INSERT INTO user_credentials (user_id, password_hash)
+    VALUES (${user.id}, ${hashDemoPassword("nimbus")})
+    ON CONFLICT (user_id) DO NOTHING
+  `;
+}
+
+await sql`DELETE FROM auth_sessions WHERE expires_at <= NOW()`;
+
+const demoSubtasks = [
+  {
+    id: "subtask-001",
+    parentId: "task-001",
+    title: "Interview five active customers",
+    status: "Done",
+    priority: "High",
+    assignee: defaultUsers[0],
+    dueDate: "2026-07-21",
+    tags: ["Research"],
+    progress: 100,
+    description: "Collect qualitative feedback from the current onboarding cohort.",
+    createdAt: "2026-07-16T03:00:00.000Z",
+  },
+  {
+    id: "subtask-002",
+    parentId: "task-001",
+    title: "Map onboarding friction points",
+    status: "Working on it",
+    priority: "Medium",
+    assignee: defaultUsers[2],
+    dueDate: "2026-07-23",
+    tags: ["UX"],
+    progress: 45,
+    description: "Turn interview notes into an actionable journey map.",
+    createdAt: "2026-07-16T04:00:00.000Z",
+  },
+  {
+    id: "subtask-003",
+    parentId: "task-002",
+    title: "Document component interaction states",
+    status: "Done",
+    priority: "Critical",
+    assignee: defaultUsers[2],
+    dueDate: "2026-07-24",
+    tags: ["Design"],
+    progress: 100,
+    description: "Capture hover, focus, disabled, loading, and error states.",
+    createdAt: "2026-07-14T06:00:00.000Z",
+  },
+];
+
+for (const task of demoSubtasks) {
+  await sql`
+    INSERT INTO tasks (
+      id, title, project_id, project, group_name, status, priority,
+      assignee_id, assignee, parent_id, created_by, updated_by,
+      due_date, tags, progress, description, custom_fields,
+      archived, archived_at, created_at
+    )
+    SELECT
+      ${task.id}, ${task.title}, parent.project_id, parent.project,
+      parent.group_name, ${task.status}, ${task.priority},
+      ${task.assignee.id}, ${JSON.stringify(task.assignee)}::jsonb,
+      parent.id, ${task.assignee.id}, ${task.assignee.id},
+      ${task.dueDate}::date, ${task.tags}, ${task.progress},
+      ${task.description}, '{}'::jsonb, FALSE, NULL,
+      ${task.createdAt}::timestamptz
+    FROM tasks parent
+    WHERE parent.id = ${task.parentId}
+      AND parent.parent_id IS NULL
+    ON CONFLICT (id) DO NOTHING
+  `;
+}
+
+const demoAssignments = [
+  ["task-001", "user-ariuna"],
+  ["task-001", "user-nomin"],
+  ["task-002", "user-nomin"],
+  ["task-002", "user-temuulen"],
+  ["subtask-001", "user-ariuna"],
+  ["subtask-001", "user-nomin"],
+  ["subtask-002", "user-nomin"],
+  ["subtask-003", "user-nomin"],
+  ["subtask-003", "user-temuulen"],
+];
+
+for (const [taskId, userId] of demoAssignments) {
+  await sql`
+    INSERT INTO task_assignees (task_id, user_id, assigned_by)
+    SELECT ${taskId}, ${userId}, 'user-ariuna'
+    FROM tasks
+    WHERE id = ${taskId}
+    ON CONFLICT (task_id, user_id) DO NOTHING
+  `;
+}
+
+console.log(
+  "Workspace, task collaboration, and authentication migrations are applied.",
+);

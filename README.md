@@ -3,15 +3,17 @@
 A polished Monday-style task management workspace built with Next.js. It includes
 light and dark themes, list/kanban/calendar views, filters, task editing,
 drag-and-drop status updates, responsive navigation, typed custom columns, inline
-cell editing, and optional Neon persistence.
+cell editing, nested subtasks, multi-person assignment, and optional Neon
+persistence.
 
 Custom columns support text, number, date, status, person, dropdown, checkbox,
 progress, and tags. Column names, types, and dropdown options can be edited at any
 time; columns can also be removed.
 
-Workspace access includes Admin, Manager, Member, and Viewer roles. Tasks can be
-assigned to active members, filtered through My Work, archived/restored by
-authorized roles, and permanently deleted by admins. The profile menu can switch
+Workspace access includes database-backed sign-up, login, logout, HttpOnly
+sessions, plus Admin, Manager, Member, and Viewer roles. Tasks can be assigned to multiple active members,
+filtered through My Work, broken into nested subtasks, archived/restored by
+authorized roles, and permanently deleted by admins. The account menu can switch
 demo identities so every permission level is easy to test.
 
 Projects are database-backed workspace entities with owners, members, colors,
@@ -27,8 +29,8 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Without a database the app
-runs in demo mode and saves changes to browser local storage.
+Open [http://localhost:8000](http://localhost:8000). Authentication and shared
+workspace persistence require the configured Neon database.
 
 ## Connect Neon
 
@@ -51,5 +53,6 @@ The UI displays `Neon connected` when the database API is available.
 - Viewer: read-only workspace access.
 
 Mutation routes validate the current workspace user against the role stored in
-Neon. The identity switcher is intentionally a demo surface; replace it with an
-authenticated session provider before public production use.
+Neon. Passwords are scrypt-hashed, session tokens are stored as hashes, and
+browsers receive opaque HttpOnly cookies. The four seeded demo accounts use the
+password `nimbus`; newly registered accounts join as Members.

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { getDatabase } from "./db";
 import { hasPermission, type Permission } from "./permissions";
 import type { UserRole, WorkspaceUser } from "./types";
+import { resolveSessionUserId } from "./session";
 
 type SqlClient = NonNullable<ReturnType<typeof getDatabase>>;
 
@@ -31,7 +32,12 @@ export async function getActor(
   request: Request,
   sql: SqlClient,
 ): Promise<WorkspaceUser | null> {
-  const actorId = request.headers.get("x-workspace-user-id");
+  const sessionUserId = await resolveSessionUserId(request, sql);
+  const demoActorId = request.headers.get("x-workspace-user-id");
+  const actorId =
+    process.env.NODE_ENV === "production"
+      ? sessionUserId
+      : demoActorId || sessionUserId;
   const workspaceId = getWorkspaceId(request);
   if (!actorId) return null;
 

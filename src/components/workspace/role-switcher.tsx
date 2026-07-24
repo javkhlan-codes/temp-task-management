@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, ShieldCheck, Users, X } from "lucide-react";
+import { ChevronDown, LogOut, ShieldCheck, Users, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ROLE_LABELS } from "@/lib/permissions";
 import type { WorkspaceUser } from "@/lib/types";
@@ -15,14 +15,12 @@ function UserAvatar({ user }: { user: WorkspaceUser }) {
 
 export function RoleSwitcher({
   currentUser,
-  users,
-  onChange,
   onManageTeam,
+  onLogout,
 }: {
   currentUser: WorkspaceUser;
-  users: WorkspaceUser[];
-  onChange: (user: WorkspaceUser) => void;
   onManageTeam: () => void;
+  onLogout: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -53,36 +51,22 @@ export function RoleSwitcher({
         <div className="role-menu">
           <div className="role-menu-header">
             <div>
-              <span>Demo identity</span>
-              <strong>Switch workspace role</strong>
+              <span>Signed in to Acme Studio</span>
+              <strong>{currentUser.email}</strong>
             </div>
             <button onClick={() => setOpen(false)} aria-label="Close user menu">
               <X size={15} />
             </button>
           </div>
-          <div className="role-user-list">
-            {users
-              .filter((user) => user.active && user.id !== "unassigned")
-              .map((user) => (
-                <button
-                  className={currentUser.id === user.id ? "active" : ""}
-                  onClick={() => {
-                    onChange(user);
-                    setOpen(false);
-                  }}
-                  key={user.id}
-                >
-                  <UserAvatar user={user} />
-                  <span>
-                    <strong>{user.name}</strong>
-                    <small>
-                      <ShieldCheck size={11} />
-                      {ROLE_LABELS[user.role]}
-                    </small>
-                  </span>
-                  {currentUser.id === user.id && <Check size={15} />}
-                </button>
-              ))}
+          <div className="account-summary">
+            <UserAvatar user={currentUser} />
+            <span>
+              <strong>{currentUser.name}</strong>
+              <small>
+                <ShieldCheck size={11} />
+                {ROLE_LABELS[currentUser.role]} account
+              </small>
+            </span>
           </div>
           <button
             className="manage-team-link"
@@ -93,6 +77,16 @@ export function RoleSwitcher({
           >
             <Users size={15} />
             Manage team & roles
+          </button>
+          <button
+            className="manage-team-link logout-link"
+            onClick={() => {
+              onLogout();
+              setOpen(false);
+            }}
+          >
+            <LogOut size={15} />
+            Sign out
           </button>
         </div>
       )}

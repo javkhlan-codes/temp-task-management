@@ -25,6 +25,30 @@ export async function GET(request: Request) {
       SELECT
         tasks.id, tasks.title, tasks.project_id, projects.name AS project,
         tasks.group_name, tasks.status, tasks.priority, tasks.assignee,
+        tasks.parent_id,
+        COALESCE(
+          (
+            SELECT JSONB_AGG(
+              JSONB_BUILD_OBJECT(
+                'id', users.id,
+                'name', users.name,
+                'email', users.email,
+                'initials', users.initials,
+                'tone', users.tone,
+                'role', workspace_members.role,
+                'active', workspace_members.active
+              )
+              ORDER BY task_assignees.assigned_at
+            )
+            FROM task_assignees
+            JOIN users ON users.id = task_assignees.user_id
+            JOIN workspace_members
+              ON workspace_members.user_id = users.id
+              AND workspace_members.workspace_id = projects.workspace_id
+            WHERE task_assignees.task_id = tasks.id
+          ),
+          JSONB_BUILD_ARRAY(tasks.assignee)
+        ) AS assignees,
         TO_CHAR(tasks.due_date, 'YYYY-MM-DD') AS due_date,
         tasks.tags, tasks.progress, tasks.description, tasks.custom_fields,
         tasks.archived, tasks.archived_at, tasks.created_at
@@ -60,8 +84,13 @@ export async function POST(request: Request) {
     const auth = await authorize(request, sql, "createTask");
     if (auth.response) return auth.response;
     const workspaceId = getWorkspaceId(request);
+    const assignees =
+      task.assignees?.length ? task.assignees : [task.assignee];
+    const assigneeIds = Array.from(
+      new Set(assignees.map((assignee) => assignee.id)),
+    );
     if (
-      task.assignee.id !== auth.user.id &&
+      (assigneeIds.length !== 1 || assigneeIds[0] !== auth.user.id) &&
       !hasPermission(auth.user, "assignTasks")
     ) {
       return NextResponse.json(
@@ -83,33 +112,52 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const assignees = await sql`
-      SELECT 1
+    const assigneeRows = await sql`
+      SELECT user_id
       FROM workspace_members
       WHERE workspace_id = ${workspaceId}
-        AND user_id = ${task.assignee.id}
+        AND user_id = ANY(${assigneeIds}::text[])
         AND active = TRUE
-      LIMIT 1
     `;
-    if (!assignees.length) {
+    if (assigneeRows.length !== assigneeIds.length) {
       return NextResponse.json(
-        { error: "Assignee must be an active workspace member" },
+        { error: "Every assignee must be an active workspace member" },
         { status: 400 },
       );
     }
+    if (task.parentId) {
+      const parents = await sql`
+        SELECT 1
+        FROM tasks
+        WHERE id = ${task.parentId}
+          AND project_id = ${task.projectId}
+          AND parent_id IS NULL
+        LIMIT 1
+      `;
+      if (!parents.length) {
+        return NextResponse.json(
+          { error: "Subtask parent must be a top-level task in this project" },
+          { status: 400 },
+        );
+      }
+    }
+
+    const primaryAssignee =
+      assignees.find((assignee) => assignee.id === assigneeIds[0]) ??
+      task.assignee;
 
     await sql`
       INSERT INTO tasks (
         id, title, project_id, project, group_name, status, priority,
-        assignee_id, assignee, created_by, updated_by,
+        assignee_id, assignee, parent_id, created_by, updated_by,
         due_date, tags, progress, description, created_at,
         custom_fields, archived, archived_at
       )
       VALUES (
         ${task.id}, ${task.title.trim()}, ${task.projectId},
         ${String(projects[0].name)}, ${task.group},
-        ${task.status}, ${task.priority}, ${task.assignee.id},
-        ${JSON.stringify(task.assignee)}::jsonb,
+        ${task.status}, ${task.priority}, ${primaryAssignee.id},
+        ${JSON.stringify(primaryAssignee)}::jsonb, ${task.parentId ?? null},
         ${auth.user.id}, ${auth.user.id},
         ${task.dueDate}::date, ${task.tags}, ${task.progress},
         ${task.description}, ${task.createdAt}::timestamptz,
@@ -118,6 +166,13 @@ export async function POST(request: Request) {
         ${task.archivedAt ?? null}::timestamptz
       )
     `;
+    for (const assigneeId of assigneeIds) {
+      await sql`
+        INSERT INTO task_assignees (task_id, user_id, assigned_by)
+        VALUES (${task.id}, ${assigneeId}, ${auth.user.id})
+        ON CONFLICT (task_id, user_id) DO NOTHING
+      `;
+    }
     await sql`
       INSERT INTO activity_logs (
         workspace_id, project_id, task_id, actor_id, event_type, payload
@@ -128,7 +183,17 @@ export async function POST(request: Request) {
       )
     `;
 
-    return NextResponse.json({ task }, { status: 201 });
+    return NextResponse.json(
+      {
+        task: {
+          ...task,
+          assignee: primaryAssignee,
+          assignees,
+          parentId: task.parentId ?? null,
+        },
+      },
+      { status: 201 },
+    );
   } catch (error) {
     console.error("Unable to create task", error);
     return NextResponse.json({ error: "Unable to create task" }, { status: 500 });

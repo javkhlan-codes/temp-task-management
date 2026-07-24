@@ -10,6 +10,8 @@ type TaskRow = {
   status: Task["status"];
   priority: Task["priority"];
   assignee: Task["assignee"];
+  assignees?: Task["assignees"];
+  parent_id?: string | null;
   due_date: string | Date;
   tags: string[];
   progress: number;
@@ -46,6 +48,11 @@ export function rowToTask(row: TaskRow): Task {
     status: row.status,
     priority: row.priority,
     assignee: row.assignee,
+    assignees:
+      Array.isArray(row.assignees) && row.assignees.length
+        ? row.assignees
+        : [row.assignee],
+    parentId: row.parent_id ?? null,
     dueDate,
     tags: row.tags ?? [],
     progress: row.progress,
