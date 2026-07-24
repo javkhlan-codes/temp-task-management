@@ -66,9 +66,11 @@ export function hasPermission(
 }
 
 export function canEditTask(user: WorkspaceUser, task: Task): boolean {
+  const assignees = task.assignees?.length ? task.assignees : [task.assignee];
   return (
     hasPermission(user, "editAnyTask") ||
-    (hasPermission(user, "editOwnTask") && task.assignee.id === user.id)
+    (hasPermission(user, "editOwnTask") &&
+      assignees.some((assignee) => assignee.id === user.id))
   );
 }
 

@@ -21,6 +21,7 @@ import {
   Hash,
   Inbox,
   LayoutList,
+  ListTree,
   ListChecks,
   Menu,
   MessageSquareText,
@@ -36,6 +37,7 @@ import {
   Trash2,
   Type,
   Users,
+  UserPlus,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -70,12 +72,12 @@ import {
 import { RoleSwitcher } from "@/components/workspace/role-switcher";
 import { TeamManagementModal } from "@/components/workspace/team-management-modal";
 import { ProjectModal } from "@/components/workspace/project-modal";
+import { LoginScreen } from "@/components/auth/login-screen";
 
 const STORAGE_KEY = "nimbus-tasks-v1";
 const COLUMNS_STORAGE_KEY = "nimbus-columns-v1";
 const USERS_STORAGE_KEY = "nimbus-users-v1";
 const PROJECTS_STORAGE_KEY = "nimbus-projects-v1";
-const CURRENT_USER_KEY = "nimbus-current-user";
 
 const statusClass: Record<TaskStatus, string> = {
   "Not started": "status-neutral",
@@ -125,6 +127,19 @@ function ProjectMark({ name, color }: { name: string; color?: string }) {
   );
 }
 
+function taskAssignees(task: Task): WorkspaceUser[] {
+  return task.assignees?.length ? task.assignees : [task.assignee];
+}
+
+function normalizeTask(task: Task): Task {
+  return {
+    ...task,
+    assignees: taskAssignees(task),
+    parentId: task.parentId ?? null,
+    customFields: task.customFields ?? {},
+  };
+}
+
 export function TaskManager() {
   const [tasks, setTasks] = useState<Task[]>(DEMO_TASKS);
   const [columns, setColumns] = useState<CustomColumn[]>(DEMO_COLUMNS);
@@ -133,6 +148,8 @@ export function TaskManager() {
   const [currentUser, setCurrentUser] = useState<WorkspaceUser>(
     WORKSPACE_USERS[0],
   );
+  const [sessionReady, setSessionReady] = useState(false);
+  const [signedIn, setSignedIn] = useState(false);
   const [mode, setMode] = useState<PersistenceMode>("loading");
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [view, setView] = useState<ViewMode>("list");
@@ -144,6 +161,7 @@ export function TaskManager() {
   const [activityOpen, setActivityOpen] = useState(false);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [subtaskParent, setSubtaskParent] = useState<Task | null>(null);
   const [editingColumn, setEditingColumn] = useState<CustomColumn | "new" | null>(
     null,
   );
@@ -156,19 +174,42 @@ export function TaskManager() {
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("nimbus-theme");
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     const nextTheme =
       savedTheme === "dark" || savedTheme === "light"
         ? savedTheme
-        : prefersDark
-          ? "dark"
-          : "light";
+        : "light";
     setTheme(nextTheme);
     document.documentElement.dataset.theme = nextTheme;
 
     const load = async () => {
-      const savedActorId = localStorage.getItem(CURRENT_USER_KEY);
-      const actorId = savedActorId || WORKSPACE_USERS[0].id;
+      let sessionUser: WorkspaceUser;
+      try {
+        const sessionResponse = await fetch("/api/auth/session", {
+          cache: "no-store",
+        });
+        if (!sessionResponse.ok) {
+          setSignedIn(false);
+          setSessionReady(true);
+          return;
+        }
+        const sessionPayload = (await sessionResponse.json()) as {
+          user: WorkspaceUser | null;
+        };
+        if (!sessionPayload.user) {
+          setSignedIn(false);
+          setSessionReady(true);
+          return;
+        }
+        sessionUser = sessionPayload.user;
+        setCurrentUser(sessionUser);
+        setSignedIn(true);
+      } catch {
+        setSignedIn(false);
+        setSessionReady(true);
+        return;
+      }
+
+      const actorId = sessionUser.id;
       const requestOptions: RequestInit = {
         cache: "no-store",
         headers: { "x-workspace-user-id": actorId },
@@ -205,10 +246,7 @@ export function TaskManager() {
               ? ((await columnsResponse.json()) as { columns: CustomColumn[] })
               : { columns: [] };
           setTasks(
-            tasksPayload.tasks.map((task) => ({
-              ...task,
-              customFields: task.customFields ?? {},
-            })),
+            tasksPayload.tasks.map(normalizeTask),
           );
           setProjects(loadedProjects);
           if (selectedProject) setActiveProject(selectedProject.id);
@@ -220,6 +258,7 @@ export function TaskManager() {
               WORKSPACE_USERS[0],
           );
           setMode("database");
+          setSessionReady(true);
           return;
         }
       } catch {
@@ -230,10 +269,7 @@ export function TaskManager() {
       if (saved) {
         try {
           setTasks(
-            (JSON.parse(saved) as Task[]).map((task) => ({
-              ...task,
-              customFields: task.customFields ?? {},
-            })),
+            (JSON.parse(saved) as Task[]).map(normalizeTask),
           );
         } catch {
           localStorage.removeItem(STORAGE_KEY);
@@ -275,6 +311,7 @@ export function TaskManager() {
         }
       }
       setMode("local");
+      setSessionReady(true);
     };
 
     void load();
@@ -421,13 +458,13 @@ export function TaskManager() {
         setToast("Your role cannot edit this task");
         return;
       }
-      const updated: Task = {
+      const updated = normalizeTask({
         ...draft,
         id,
         archived: existingTask.archived ?? false,
         archivedAt: existingTask.archivedAt ?? null,
         createdAt: existingTask.createdAt,
-      };
+      });
       setTasks((current) => current.map((task) => (task.id === id ? updated : task)));
       void syncTask("PATCH", updated);
       setToast("Task updated");
@@ -438,20 +475,21 @@ export function TaskManager() {
       }
       const effectiveDraft = hasPermission(currentUser, "assignTasks")
         ? draft
-        : { ...draft, assignee: currentUser };
-      const task: Task = {
+        : { ...draft, assignee: currentUser, assignees: [currentUser] };
+      const task = normalizeTask({
         ...effectiveDraft,
         id: crypto.randomUUID(),
         archived: false,
         archivedAt: null,
         createdAt: new Date().toISOString(),
-      };
+      });
       setTasks((current) => [task, ...current]);
       void syncTask("POST", task);
       setToast("New task created");
     }
     setNewTaskOpen(false);
     setEditingTask(null);
+    setSubtaskParent(null);
   };
 
   const updateTask = (id: string, changes: Partial<Task>) => {
@@ -461,9 +499,62 @@ export function TaskManager() {
       setToast("You can only edit tasks assigned to you");
       return;
     }
-    const updated = { ...existing, ...changes };
-    setTasks((current) => current.map((task) => (task.id === id ? updated : task)));
+    const updated = normalizeTask({ ...existing, ...changes });
+    const nextTasks = tasks.map((task) => (task.id === id ? updated : task));
+    let updatedParent: Task | undefined;
+    if (updated.parentId) {
+      const siblings = nextTasks.filter(
+        (task) => task.parentId === updated.parentId && !task.archived,
+      );
+      const progress = siblings.length
+        ? Math.round(
+            siblings.reduce((total, task) => total + task.progress, 0) /
+              siblings.length,
+          )
+        : 0;
+      const parent = nextTasks.find((task) => task.id === updated.parentId);
+      if (parent) {
+        updatedParent = { ...parent, progress };
+      }
+    }
+    setTasks(
+      updatedParent
+        ? nextTasks.map((task) =>
+            task.id === updatedParent?.id ? updatedParent : task,
+          )
+        : nextTasks,
+    );
     void syncTask("PATCH", updated);
+    if (updatedParent) void syncTask("PATCH", updatedParent);
+  };
+
+  const createSubtask = (parent: Task, title: string) => {
+    if (!hasPermission(currentUser, "createTask")) {
+      setToast("Your role cannot create subtasks");
+      return;
+    }
+    const assignees = hasPermission(currentUser, "assignTasks")
+      ? taskAssignees(parent)
+      : [currentUser];
+    const subtask: Task = {
+      ...parent,
+      id: crypto.randomUUID(),
+      title: title.trim(),
+      description: "",
+      status: "Not started",
+      priority: parent.priority,
+      assignee: assignees[0],
+      assignees,
+      parentId: parent.id,
+      progress: 0,
+      customFields: {},
+      archived: false,
+      archivedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    setTasks((current) => [...current, subtask]);
+    void syncTask("POST", subtask);
+    setToast("Subtask added");
   };
 
   const deleteTask = (task: Task) => {
@@ -588,10 +679,15 @@ export function TaskManager() {
     setToast("Team member deactivated");
   };
 
-  const switchCurrentUser = (user: WorkspaceUser) => {
-    setCurrentUser(user);
-    localStorage.setItem(CURRENT_USER_KEY, user.id);
-    setToast(`Switched to ${ROLE_LABELS[user.role]} view`);
+  const authenticated = (_user: WorkspaceUser) => {
+    window.location.reload();
+  };
+
+  const logout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setSignedIn(false);
+    setActivityOpen(false);
+    setSidebarOpen(false);
   };
 
   const saveProject = async (
@@ -674,7 +770,9 @@ export function TaskManager() {
       }
       const activeTasks = tasks.filter((task) => !task.archived);
       if (activeProject === "My work") {
-        return activeTasks.filter((task) => task.assignee.id === currentUser.id);
+        return activeTasks.filter((task) =>
+          taskAssignees(task).some((assignee) => assignee.id === currentUser.id),
+        );
       }
       return activeProject === "All tasks"
         ? activeTasks
@@ -685,10 +783,15 @@ export function TaskManager() {
 
   const visibleTasks = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return projectTasks.filter((task) => {
+    const directMatches = projectTasks.filter((task) => {
       const matchesQuery =
         !normalizedQuery ||
-        [task.title, task.project, task.assignee.name, ...task.tags]
+        [
+          task.title,
+          task.project,
+          ...taskAssignees(task).map((assignee) => assignee.name),
+          ...task.tags,
+        ]
           .join(" ")
           .toLowerCase()
           .includes(normalizedQuery);
@@ -697,15 +800,27 @@ export function TaskManager() {
         priorityFilter === "All" || task.priority === priorityFilter;
       return matchesQuery && matchesStatus && matchesPriority;
     });
+    const parentIds = new Set(
+      directMatches
+        .map((task) => task.parentId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const matchIds = new Set(directMatches.map((task) => task.id));
+    return projectTasks.filter(
+      (task) => matchIds.has(task.id) || parentIds.has(task.id),
+    );
   }, [priorityFilter, projectTasks, query, statusFilter]);
 
-  const doneCount = projectTasks.filter((task) => task.status === "Done").length;
-  const activeCount = projectTasks.filter((task) => task.status === "Working on it").length;
-  const overdueCount = projectTasks.filter((task) =>
+  const summaryTasks = projectTasks.filter((task) => !task.parentId);
+  const doneCount = summaryTasks.filter((task) => task.status === "Done").length;
+  const activeCount = summaryTasks.filter(
+    (task) => task.status === "Working on it",
+  ).length;
+  const overdueCount = summaryTasks.filter((task) =>
     isOverdue(task.dueDate, task.status),
   ).length;
-  const completion = projectTasks.length
-    ? Math.round((doneCount / projectTasks.length) * 100)
+  const completion = summaryTasks.length
+    ? Math.round((doneCount / summaryTasks.length) * 100)
     : 0;
 
   const activeProjectRecord = projects.find(
@@ -722,6 +837,28 @@ export function TaskManager() {
         .filter((column) => column.projectId === activeProjectRecord.id)
         .sort((a, b) => a.position - b.position)
     : [];
+
+  if (!sessionReady) {
+    return (
+      <div className="app-loading">
+        <span className="brand-icon">
+          <Sparkles size={18} />
+        </span>
+        <strong>Opening Nimbus…</strong>
+      </div>
+    );
+  }
+
+  if (!signedIn) {
+    return (
+      <LoginScreen
+        users={users}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onAuthenticated={authenticated}
+      />
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -762,7 +899,12 @@ export function TaskManager() {
             <span className="nav-count">
               {
                 tasks.filter(
-                  (task) => !task.archived && task.assignee.id === currentUser.id,
+                  (task) =>
+                    !task.archived &&
+                    !task.parentId &&
+                    taskAssignees(task).some(
+                      (assignee) => assignee.id === currentUser.id,
+                    ),
                 ).length
               }
             </span>
@@ -795,7 +937,7 @@ export function TaskManager() {
             <Grid2X2 size={18} />
             <span>All tasks</span>
             <span className="nav-count">
-              {tasks.filter((task) => !task.archived).length}
+              {tasks.filter((task) => !task.archived && !task.parentId).length}
             </span>
           </button>
           <button
@@ -841,7 +983,10 @@ export function TaskManager() {
           </div>
           {projects.filter((project) => !project.archived).map((project) => {
             const count = tasks.filter(
-              (task) => task.projectId === project.id && !task.archived,
+              (task) =>
+                task.projectId === project.id &&
+                !task.archived &&
+                !task.parentId,
             ).length;
             return (
               <button
@@ -949,9 +1094,8 @@ export function TaskManager() {
             </button>
             <RoleSwitcher
               currentUser={currentUser}
-              users={users}
-              onChange={switchCurrentUser}
               onManageTeam={() => setTeamModalOpen(true)}
+              onLogout={logout}
             />
           </div>
         </header>
@@ -1025,7 +1169,7 @@ export function TaskManager() {
               icon={<CheckCircle2 size={18} />}
               label="Completion"
               value={`${completion}%`}
-              detail={`${doneCount} of ${projectTasks.length} tasks`}
+              detail={`${doneCount} of ${summaryTasks.length} tasks`}
               tone="violet"
               progress={completion}
             />
@@ -1155,11 +1299,17 @@ export function TaskManager() {
                   }}
                   onCellUpdate={updateCustomField}
                   onAdd={openNewTask}
+                  onAddSubtask={(parent) => {
+                    setSubtaskParent(parent);
+                    setNewTaskOpen(true);
+                  }}
+                  canAssign={hasPermission(currentUser, "assignTasks")}
+                  canCreate={hasPermission(currentUser, "createTask")}
                 />
               )}
               {view === "board" && (
                 <BoardView
-                  tasks={visibleTasks}
+                  tasks={visibleTasks.filter((task) => !task.parentId)}
                   onEdit={setEditingTask}
                   onUpdate={updateTask}
                   onAdd={openNewTask}
@@ -1167,7 +1317,7 @@ export function TaskManager() {
               )}
               {view === "calendar" && (
                 <CalendarView
-                  tasks={visibleTasks}
+                  tasks={visibleTasks.filter((task) => !task.parentId)}
                   month={month}
                   onMonthChange={setMonth}
                   onEdit={setEditingTask}
@@ -1244,15 +1394,34 @@ export function TaskManager() {
       {(newTaskOpen || editingTask) && (
         <TaskModal
           task={editingTask}
-          defaultProject={activeProjectRecord ?? projects.find((project) => !project.archived)}
+          parentTask={subtaskParent}
+          subtasks={
+            editingTask
+              ? tasks.filter(
+                  (task) =>
+                    task.parentId === editingTask.id && !task.archived,
+                )
+              : []
+          }
+          defaultProject={
+            (subtaskParent
+              ? projects.find(
+                  (project) => project.id === subtaskParent.projectId,
+                )
+              : activeProjectRecord) ??
+            projects.find((project) => !project.archived)
+          }
           projects={projects.filter((project) => !project.archived)}
           defaultAssignee={currentUser}
           users={users}
           onClose={() => {
             setNewTaskOpen(false);
             setEditingTask(null);
+            setSubtaskParent(null);
           }}
           onSave={saveTask}
+          onCreateSubtask={createSubtask}
+          onUpdateSubtask={updateTask}
           onDelete={
             editingTask && hasPermission(currentUser, "deleteTask")
               ? deleteTask
@@ -1363,6 +1532,9 @@ function ListView({
   onEditColumn,
   onCellUpdate,
   onAdd,
+  onAddSubtask,
+  canAssign,
+  canCreate,
 }: {
   tasks: Task[];
   users: WorkspaceUser[];
@@ -1376,9 +1548,18 @@ function ListView({
     value: CustomFieldValue,
   ) => void;
   onAdd: () => void;
+  onAddSubtask: (parent: Task) => void;
+  canAssign: boolean;
+  canCreate: boolean;
 }) {
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(
+    () => new Set(["task-001", "task-002"]),
+  );
+  const rootTasks = tasks.filter((task) => !task.parentId);
   const groups = ["This week", "Upcoming", "Completed"];
-  const usedGroups = groups.filter((group) => tasks.some((task) => task.group === group));
+  const usedGroups = groups.filter((group) =>
+    rootTasks.some((task) => task.group === group),
+  );
   const gridStyle = {
     "--task-grid": `27px minmax(240px, 1.6fr) minmax(130px, .8fr) 128px 100px 91px ${columns
       .map(() => "130px")
@@ -1396,7 +1577,7 @@ function ListView({
         <div className="task-table-header" style={gridStyle}>
           <span className="col-check" />
           <span>Task</span>
-          <span>Owner</span>
+          <span>Assignees</span>
           <span>Status</span>
           <span>Priority</span>
           <span>Due date</span>
@@ -1415,7 +1596,7 @@ function ListView({
           <span className="col-menu" />
         </div>
         {usedGroups.map((group) => {
-          const groupTasks = tasks.filter((task) => task.group === group);
+          const groupTasks = rootTasks.filter((task) => task.group === group);
           return (
             <div className="task-group" key={group}>
               <div className="group-header">
@@ -1426,24 +1607,67 @@ function ListView({
                 <strong>{group}</strong>
                 <span>{groupTasks.length}</span>
               </div>
-              {groupTasks.map((task) => (
-                <TaskRow
-                  task={task}
-                  users={users}
-                  columns={columns}
-                  key={task.id}
-                  onEdit={onEdit}
-                  onUpdate={onUpdate}
-                  onCellUpdate={onCellUpdate}
-                  gridStyle={gridStyle}
-                />
-              ))}
-              <button className="add-row" onClick={onAdd}>
+              {groupTasks.map((task) => {
+                const subtasks = tasks.filter(
+                  (candidate) => candidate.parentId === task.id,
+                );
+                const expanded = expandedTasks.has(task.id);
+                return (
+                  <div className="task-family" key={task.id}>
+                    <TaskRow
+                      task={task}
+                      subtasks={subtasks}
+                      users={users}
+                      columns={columns}
+                      onEdit={onEdit}
+                      onUpdate={onUpdate}
+                      onCellUpdate={onCellUpdate}
+                      gridStyle={gridStyle}
+                      canAssign={canAssign}
+                      expanded={expanded}
+                      onToggleSubtasks={() =>
+                        setExpandedTasks((current) => {
+                          const next = new Set(current);
+                          if (next.has(task.id)) next.delete(task.id);
+                          else next.add(task.id);
+                          return next;
+                        })
+                      }
+                    />
+                    {expanded &&
+                      subtasks.map((subtask) => (
+                        <TaskRow
+                          task={subtask}
+                          subtasks={[]}
+                          users={users}
+                          columns={columns}
+                          key={subtask.id}
+                          onEdit={onEdit}
+                          onUpdate={onUpdate}
+                          onCellUpdate={onCellUpdate}
+                          gridStyle={gridStyle}
+                          canAssign={canAssign}
+                          isSubtask
+                        />
+                      ))}
+                    {expanded && canCreate && (
+                      <button
+                        className="subtask-add-row"
+                        onClick={() => onAddSubtask(task)}
+                      >
+                        <UserPlus size={14} />
+                        Add subtask
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              {canCreate && <button className="add-row" onClick={onAdd}>
                 <span>
                   <Plus size={14} />
                 </span>
                 Add task
-              </button>
+              </button>}
             </div>
           );
         })}
@@ -1454,14 +1678,20 @@ function ListView({
 
 function TaskRow({
   task,
+  subtasks,
   users,
   columns,
   onEdit,
   onUpdate,
   onCellUpdate,
   gridStyle,
+  canAssign,
+  expanded = false,
+  onToggleSubtasks,
+  isSubtask = false,
 }: {
   task: Task;
+  subtasks: Task[];
   users: WorkspaceUser[];
   columns: CustomColumn[];
   onEdit: (task: Task) => void;
@@ -1472,6 +1702,10 @@ function TaskRow({
     value: CustomFieldValue,
   ) => void;
   gridStyle: React.CSSProperties;
+  canAssign: boolean;
+  expanded?: boolean;
+  onToggleSubtasks?: () => void;
+  isSubtask?: boolean;
 }) {
   const toggleDone = () =>
     onUpdate(task.id, {
@@ -1480,7 +1714,7 @@ function TaskRow({
     });
 
   return (
-    <div className="task-row" style={gridStyle}>
+    <div className={`task-row ${isSubtask ? "subtask-row" : ""}`} style={gridStyle}>
       <button
         className={`task-check ${task.status === "Done" ? "checked" : ""}`}
         onClick={toggleDone}
@@ -1488,16 +1722,39 @@ function TaskRow({
       >
         {task.status === "Done" && <Check size={13} strokeWidth={3} />}
       </button>
-      <button className="task-name-cell" onClick={() => onEdit(task)}>
-        <span className={task.status === "Done" ? "completed-title" : ""}>
-          {task.title}
-        </span>
-        <small>{task.tags.join(" · ")}</small>
-      </button>
-      <div className="owner-cell">
-        <Avatar person={task.assignee} small />
-        <span>{task.assignee.name}</span>
+      <div className="task-title-cluster">
+        {subtasks.length > 0 ? (
+          <button
+            className={`subtask-toggle ${expanded ? "expanded" : ""}`}
+            onClick={onToggleSubtasks}
+            aria-label={`${expanded ? "Collapse" : "Expand"} ${subtasks.length} subtasks`}
+          >
+            <ChevronRight size={14} />
+          </button>
+        ) : isSubtask ? (
+          <span className="subtask-branch">
+            <ListTree size={13} />
+          </span>
+        ) : (
+          <span className="subtask-spacer" />
+        )}
+        <button className="task-name-cell" onClick={() => onEdit(task)}>
+          <span className={task.status === "Done" ? "completed-title" : ""}>
+            {task.title}
+          </span>
+          <small>
+            {subtasks.length
+              ? `${subtasks.filter((subtask) => subtask.status === "Done").length}/${subtasks.length} subtasks · ${task.progress}%`
+              : task.tags.join(" · ")}
+          </small>
+        </button>
       </div>
+      <AssigneeCell
+        task={task}
+        users={users}
+        canAssign={canAssign}
+        onUpdate={onUpdate}
+      />
       <label className={`status-select ${statusClass[task.status]}`}>
         <span />
         <select
@@ -1553,6 +1810,87 @@ function TaskRow({
       >
         <MoreHorizontal size={17} />
       </button>
+    </div>
+  );
+}
+
+function AssigneeCell({
+  task,
+  users,
+  canAssign,
+  onUpdate,
+}: {
+  task: Task;
+  users: WorkspaceUser[];
+  canAssign: boolean;
+  onUpdate: (id: string, changes: Partial<Task>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const assigned = taskAssignees(task);
+  const activeUsers = users.filter(
+    (user) => user.active && user.id !== "unassigned",
+  );
+
+  const toggle = (user: WorkspaceUser) => {
+    const exists = assigned.some((assignee) => assignee.id === user.id);
+    if (exists && assigned.length === 1) return;
+    const next = exists
+      ? assigned.filter((assignee) => assignee.id !== user.id)
+      : [...assigned, user];
+    onUpdate(task.id, {
+      assignee: next[0],
+      assignees: next,
+    });
+  };
+
+  return (
+    <div className={`owner-cell assignee-cell ${open ? "open" : ""}`}>
+      <button
+        className="assignee-trigger"
+        disabled={!canAssign}
+        onClick={() => setOpen((current) => !current)}
+        aria-label={`Assign people to ${task.title}`}
+        aria-expanded={open}
+      >
+        <span className="assignee-stack">
+          {assigned.slice(0, 3).map((person) => (
+            <Avatar person={person} small key={person.id} />
+          ))}
+        </span>
+        <span>
+          {assigned.length === 1
+            ? assigned[0].name
+            : `${assigned.length} people`}
+        </span>
+        {canAssign && <Plus size={13} />}
+      </button>
+      {open && canAssign && (
+        <div className="assignee-menu">
+          <div className="assignee-menu-heading">
+            <strong>Assign people</strong>
+            <button onClick={() => setOpen(false)}>Done</button>
+          </div>
+          {activeUsers.map((user) => {
+            const selected = assigned.some(
+              (assignee) => assignee.id === user.id,
+            );
+            return (
+              <button
+                className={selected ? "selected" : ""}
+                onClick={() => toggle(user)}
+                key={user.id}
+              >
+                <Avatar person={user} small />
+                <span>
+                  <strong>{user.name}</strong>
+                  <small>{ROLE_LABELS[user.role]}</small>
+                </span>
+                <i>{selected && <Check size={12} strokeWidth={3} />}</i>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -2282,6 +2620,8 @@ function ModalCustomField({
 
 function TaskModal({
   task,
+  parentTask,
+  subtasks,
   defaultProject,
   projects,
   defaultAssignee,
@@ -2289,12 +2629,16 @@ function TaskModal({
   columns,
   onClose,
   onSave,
+  onCreateSubtask,
+  onUpdateSubtask,
   onDelete,
   onArchive,
   readOnly,
   canAssign,
 }: {
   task: Task | null;
+  parentTask: Task | null;
+  subtasks: Task[];
   defaultProject: Project | undefined;
   projects: Project[];
   defaultAssignee: WorkspaceUser;
@@ -2302,6 +2646,8 @@ function TaskModal({
   columns: CustomColumn[];
   onClose: () => void;
   onSave: (draft: TaskDraft, id?: string) => void;
+  onCreateSubtask: (parent: Task, title: string) => void;
+  onUpdateSubtask: (id: string, changes: Partial<Task>) => void;
   onDelete?: (task: Task) => void;
   onArchive?: (task: Task) => void;
   readOnly: boolean;
@@ -2312,20 +2658,31 @@ function TaskModal({
   const [projectId, setProjectId] = useState(
     task?.projectId ?? defaultProject?.id ?? projects[0]?.id ?? "",
   );
-  const [group, setGroup] = useState(task?.group ?? "This week");
+  const [group, setGroup] = useState(
+    task?.group ?? parentTask?.group ?? "This week",
+  );
   const [status, setStatus] = useState<TaskStatus>(task?.status ?? "Not started");
-  const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? "Medium");
-  const [assigneeName, setAssigneeName] = useState(
-    task?.assignee.name ?? defaultAssignee.name,
+  const [priority, setPriority] = useState<TaskPriority>(
+    task?.priority ?? parentTask?.priority ?? "Medium",
+  );
+  const [assigneeIds, setAssigneeIds] = useState<string[]>(
+    task
+      ? taskAssignees(task).map((assignee) => assignee.id)
+      : parentTask
+        ? taskAssignees(parentTask).map((assignee) => assignee.id)
+        : [defaultAssignee.id],
   );
   const [dueDate, setDueDate] = useState(
-    task?.dueDate ?? new Date().toISOString().slice(0, 10),
+    task?.dueDate ??
+      parentTask?.dueDate ??
+      new Date().toISOString().slice(0, 10),
   );
   const [tags, setTags] = useState(task?.tags.join(", ") ?? "");
   const [progress, setProgress] = useState(task?.progress ?? 0);
   const [customFields, setCustomFields] = useState<
     Record<string, CustomFieldValue>
   >(task?.customFields ?? {});
+  const [subtaskTitle, setSubtaskTitle] = useState("");
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2339,8 +2696,8 @@ function TaskModal({
     event.preventDefault();
     if (readOnly) return;
     if (!title.trim()) return;
-    const assignee =
-      users.find((person) => person.name === assigneeName) ?? defaultAssignee;
+    const assignees = users.filter((person) => assigneeIds.includes(person.id));
+    const assignee = assignees[0] ?? defaultAssignee;
     const selectedProject =
       projects.find((project) => project.id === projectId) ?? defaultProject;
     if (!selectedProject) return;
@@ -2354,6 +2711,8 @@ function TaskModal({
         status,
         priority,
         assignee,
+        assignees: assignees.length ? assignees : [assignee],
+        parentId: task?.parentId ?? parentTask?.id ?? null,
         dueDate,
         tags: tags
           .split(",")
@@ -2375,9 +2734,17 @@ function TaskModal({
       >
         <div className="modal-header">
           <div>
-            <span className="panel-kicker">{task ? "Task details" : "Create task"}</span>
+            <span className="panel-kicker">
+              {task ? "Task details" : parentTask ? "Create subtask" : "Create task"}
+            </span>
             <h2>
-              {task ? (readOnly ? "View task" : "Edit task") : "Add something new"}
+              {task
+                ? readOnly
+                  ? "View task"
+                  : "Edit task"
+                : parentTask
+                  ? `Break down “${parentTask.title}”`
+                  : "Add something new"}
             </h2>
           </div>
           <button type="button" className="icon-button" onClick={onClose}>
@@ -2385,6 +2752,15 @@ function TaskModal({
           </button>
         </div>
         <fieldset className="modal-content" disabled={readOnly}>
+          {parentTask && (
+            <div className="parent-task-banner full-field">
+              <ListTree size={17} />
+              <span>
+                <small>Subtask of</small>
+                <strong>{parentTask.title}</strong>
+              </span>
+            </div>
+          )}
           <label className="form-field full-field">
             <span>Task name</span>
             <input
@@ -2408,6 +2784,7 @@ function TaskModal({
             <span>Project</span>
             <select
               value={projectId}
+              disabled={Boolean(parentTask)}
               onChange={(event) => setProjectId(event.target.value)}
             >
               {projects.map((project) => (
@@ -2451,27 +2828,46 @@ function TaskModal({
               ))}
             </select>
           </label>
-          <label className="form-field">
-            <span>Owner</span>
-            <select
-              value={assigneeName}
-              disabled={!canAssign}
-              onChange={(event) => setAssigneeName(event.target.value)}
-            >
+          <div className="form-field full-field">
+            <span>Assignees</span>
+            <div className="modal-assignee-grid">
               {users
                 .filter((person) => person.active && person.id !== "unassigned")
-                .map((person) => (
-                <option value={person.name} key={person.name}>
-                  {person.name}
-                </option>
-                ))}
-            </select>
+                .map((person) => {
+                  const selected = assigneeIds.includes(person.id);
+                  return (
+                    <button
+                      type="button"
+                      className={selected ? "selected" : ""}
+                      disabled={!canAssign}
+                      onClick={() =>
+                        setAssigneeIds((current) => {
+                          if (current.includes(person.id)) {
+                            return current.length === 1
+                              ? current
+                              : current.filter((id) => id !== person.id);
+                          }
+                          return [...current, person.id];
+                        })
+                      }
+                      key={person.id}
+                    >
+                      <Avatar person={person} small />
+                      <span>
+                        <strong>{person.name}</strong>
+                        <small>{ROLE_LABELS[person.role]}</small>
+                      </span>
+                      <i>{selected && <Check size={12} strokeWidth={3} />}</i>
+                    </button>
+                  );
+                })}
+            </div>
             {!canAssign && (
               <small className="field-hint">
-                Members can only assign new tasks to themselves.
+                Your role cannot change task assignees.
               </small>
             )}
-          </label>
+          </div>
           <label className="form-field">
             <span>Due date</span>
             <input
@@ -2489,6 +2885,88 @@ function TaskModal({
               placeholder="Design, Research, Frontend"
             />
           </label>
+          {task && !task.parentId && (
+            <div className="subtask-editor full-field">
+              <div className="subtask-editor-heading">
+                <span>
+                  <ListTree size={15} />
+                  Subtasks
+                </span>
+                <small>
+                  {subtasks.filter((subtask) => subtask.status === "Done").length}/
+                  {subtasks.length} complete
+                </small>
+              </div>
+              <div className="subtask-editor-list">
+                {subtasks.map((subtask) => (
+                  <div className="subtask-editor-row" key={subtask.id}>
+                    <button
+                      type="button"
+                      className={`task-check ${subtask.status === "Done" ? "checked" : ""}`}
+                      onClick={() =>
+                        onUpdateSubtask(subtask.id, {
+                          status:
+                            subtask.status === "Done" ? "Not started" : "Done",
+                          progress: subtask.status === "Done" ? 0 : 100,
+                        })
+                      }
+                    >
+                      {subtask.status === "Done" && (
+                        <Check size={12} strokeWidth={3} />
+                      )}
+                    </button>
+                    <span>
+                      <strong
+                        className={
+                          subtask.status === "Done" ? "completed-title" : ""
+                        }
+                      >
+                        {subtask.title}
+                      </strong>
+                      <small>{subtask.status}</small>
+                    </span>
+                    <span className="assignee-stack">
+                      {taskAssignees(subtask).slice(0, 2).map((person) => (
+                        <Avatar person={person} small key={person.id} />
+                      ))}
+                    </span>
+                  </div>
+                ))}
+                {!subtasks.length && (
+                  <p className="subtask-empty">
+                    Break this task into small, assignable next steps.
+                  </p>
+                )}
+              </div>
+              {!readOnly && (
+                <div className="subtask-quick-add">
+                  <Plus size={15} />
+                  <input
+                    value={subtaskTitle}
+                    onChange={(event) => setSubtaskTitle(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && subtaskTitle.trim()) {
+                        event.preventDefault();
+                        onCreateSubtask(task, subtaskTitle);
+                        setSubtaskTitle("");
+                      }
+                    }}
+                    placeholder="Add a subtask and press Enter"
+                  />
+                  <button
+                    type="button"
+                    disabled={!subtaskTitle.trim()}
+                    onClick={() => {
+                      onCreateSubtask(task, subtaskTitle);
+                      setSubtaskTitle("");
+                    }}
+                  >
+                    Add
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {columns.length > 0 && (
             <div className="custom-fields-editor full-field">
               <div className="custom-fields-title">

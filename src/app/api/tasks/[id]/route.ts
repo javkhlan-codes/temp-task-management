@@ -31,7 +31,19 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
     const workspaceId = getWorkspaceId(request);
     const existingRows = await sql`
-      SELECT tasks.assignee, tasks.archived, tasks.project_id
+      SELECT
+        tasks.assignee,
+        tasks.archived,
+        tasks.project_id,
+        COALESCE(
+          ARRAY(
+            SELECT user_id
+            FROM task_assignees
+            WHERE task_id = tasks.id
+            ORDER BY assigned_at
+          ),
+          ARRAY[tasks.assignee_id]
+        ) AS assignee_ids
       FROM tasks
       JOIN projects ON projects.id = tasks.project_id
       WHERE tasks.id = ${id} AND projects.workspace_id = ${workspaceId}
@@ -44,10 +56,20 @@ export async function PATCH(request: Request, context: RouteContext) {
       assignee: Task["assignee"];
       archived: boolean;
       project_id: string;
+      assignee_ids: string[];
     };
+    const nextAssignees =
+      task.assignees?.length ? task.assignees : [task.assignee];
+    const nextAssigneeIds = Array.from(
+      new Set(nextAssignees.map((assignee) => assignee.id)),
+    );
+    const existingAssigneeIds = existing.assignee_ids?.filter(Boolean).length
+      ? existing.assignee_ids.filter(Boolean)
+      : [existing.assignee.id];
     const canEdit =
       hasPermission(actor, "editAnyTask") ||
-      (hasPermission(actor, "editOwnTask") && existing.assignee.id === actor.id);
+      (hasPermission(actor, "editOwnTask") &&
+        existingAssigneeIds.includes(actor.id));
     if (!canEdit) {
       return NextResponse.json(
         { error: "You cannot edit this task" },
@@ -64,7 +86,8 @@ export async function PATCH(request: Request, context: RouteContext) {
       );
     }
     if (
-      existing.assignee.id !== task.assignee.id &&
+      (existingAssigneeIds.length !== nextAssigneeIds.length ||
+        existingAssigneeIds.some((id) => !nextAssigneeIds.includes(id))) &&
       !hasPermission(actor, "assignTasks")
     ) {
       return NextResponse.json(
@@ -87,19 +110,38 @@ export async function PATCH(request: Request, context: RouteContext) {
       );
     }
     const assigneeRows = await sql`
-      SELECT 1
+      SELECT user_id
       FROM workspace_members
       WHERE workspace_id = ${workspaceId}
-        AND user_id = ${task.assignee.id}
+        AND user_id = ANY(${nextAssigneeIds}::text[])
         AND active = TRUE
-      LIMIT 1
     `;
-    if (!assigneeRows.length) {
+    if (assigneeRows.length !== nextAssigneeIds.length) {
       return NextResponse.json(
-        { error: "Assignee must be an active workspace member" },
+        { error: "Every assignee must be an active workspace member" },
         { status: 400 },
       );
     }
+    if (task.parentId) {
+      const parentRows = await sql`
+        SELECT 1
+        FROM tasks
+        WHERE id = ${task.parentId}
+          AND project_id = ${task.projectId}
+          AND parent_id IS NULL
+        LIMIT 1
+      `;
+      if (!parentRows.length) {
+        return NextResponse.json(
+          { error: "Subtask parent must be a top-level task in this project" },
+          { status: 400 },
+        );
+      }
+    }
+    const primaryAssignee =
+      nextAssignees.find(
+        (assignee) => assignee.id === nextAssigneeIds[0],
+      ) ?? task.assignee;
 
     const rows = await sql`
       UPDATE tasks
@@ -110,8 +152,9 @@ export async function PATCH(request: Request, context: RouteContext) {
         group_name = ${task.group},
         status = ${task.status},
         priority = ${task.priority},
-        assignee_id = ${task.assignee.id},
-        assignee = ${JSON.stringify(task.assignee)}::jsonb,
+        assignee_id = ${primaryAssignee.id},
+        assignee = ${JSON.stringify(primaryAssignee)}::jsonb,
+        parent_id = ${task.parentId ?? null},
         due_date = ${task.dueDate}::date,
         tags = ${task.tags},
         progress = ${task.progress},
@@ -131,6 +174,16 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (!rows.length) {
       return NextResponse.json({ error: "Task not found" }, { status: 404 });
     }
+    await sql`DELETE FROM task_assignees WHERE task_id = ${id}`;
+    for (const assigneeId of nextAssigneeIds) {
+      await sql`
+        INSERT INTO task_assignees (task_id, user_id, assigned_by)
+        VALUES (${id}, ${assigneeId}, ${actor.id})
+        ON CONFLICT (task_id, user_id) DO UPDATE SET
+          assigned_by = EXCLUDED.assigned_by,
+          assigned_at = NOW()
+      `;
+    }
     await sql`
       INSERT INTO activity_logs (
         workspace_id, project_id, task_id, actor_id, event_type, payload
@@ -141,7 +194,14 @@ export async function PATCH(request: Request, context: RouteContext) {
         ${JSON.stringify({ title: task.title })}::jsonb
       )
     `;
-    return NextResponse.json({ task });
+    return NextResponse.json({
+      task: {
+        ...task,
+        assignee: primaryAssignee,
+        assignees: nextAssignees,
+        parentId: task.parentId ?? null,
+      },
+    });
   } catch (error) {
     console.error("Unable to update task", error);
     return NextResponse.json({ error: "Unable to update task" }, { status: 500 });

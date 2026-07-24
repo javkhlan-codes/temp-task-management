@@ -3,10 +3,14 @@
 ## Workspace and users
 
 - A workspace has active and inactive users.
+- Visitors can create a member account, log in, restore an active session, and
+  log out.
+- Passwords are never stored in plaintext and browser sessions use HttpOnly
+  cookies.
 - Each user has one role: Admin, Manager, Member, or Viewer.
 - Admins can add members, change roles, and deactivate accounts.
 - The final active admin cannot remove their own admin access.
-- Tasks can be assigned only to active workspace users.
+- Tasks can be assigned to one or more active workspace users.
 - My Work shows active tasks assigned to the current user.
 
 ## Projects
@@ -46,15 +50,18 @@ Permission checks run in the UI and again in the task, column, and user APIs.
 ## Task lifecycle
 
 - Create, edit, complete, archive, restore, and permanently delete tasks.
-- Assign owner, project, group, status, priority, due date, tags, progress, and
-  description.
+- Assign one or more owners, project, group, status, priority, due date, tags,
+  progress, and description.
+- Break a top-level task into subtasks; subtask progress rolls up to the parent.
+- Expand and complete subtasks from the grouped list or task details.
 - Search by title, project, owner, or tag.
 - Filter by status and priority.
 - View work as a grouped list, drag-and-drop board, or calendar.
 - Archived tasks are hidden from active projects and available in Archive.
 - My Work follows the selected current workspace user.
 - Every task references a real project and assignee by foreign key.
-- Task creator, last updater, archive actor, and timestamps are auditable.
+- Task creator, last updater, assignment actor, archive actor, and timestamps
+  are auditable.
 - A task cannot be assigned to an inactive or out-of-workspace user.
 
 ## Custom columns
@@ -85,6 +92,9 @@ Permission checks run in the UI and again in the task, column, and user APIs.
 ## Experience and platform
 
 - Full light and dark themes.
+- Persistent database-backed sign-up/sign-in/sign-out with role-aware workspace
+  accounts.
+- Authentication forms use source-owned shadcn UI components.
 - Responsive desktop, tablet, and mobile navigation.
 - Optimistic UI updates with local fallback when Neon is unavailable.
 - Neon schema setup is idempotent and does not drop existing data.
