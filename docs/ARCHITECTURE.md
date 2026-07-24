@@ -1,4 +1,4 @@
-# Nimbus architecture
+# Pro Team architecture
 
 ## Delivery sequence
 

@@ -1,4 +1,4 @@
-# Nimbus normalized data model
+# Pro Team normalized data model
 
 ```mermaid
 erDiagram

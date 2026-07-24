@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { authorize, getActor, getWorkspaceId } from "@/lib/api-auth";
 import { getDatabase } from "@/lib/db";
-import { hasPermission } from "@/lib/permissions";
+import { canAccessEveryProject, hasPermission } from "@/lib/permissions";
+import { notifyUsers } from "@/lib/notifications";
 import type { Task } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -35,6 +36,8 @@ export async function PATCH(request: Request, context: RouteContext) {
         tasks.assignee,
         tasks.archived,
         tasks.project_id,
+        tasks.status,
+        tasks.recurrence,
         COALESCE(
           ARRAY(
             SELECT user_id
@@ -47,6 +50,15 @@ export async function PATCH(request: Request, context: RouteContext) {
       FROM tasks
       JOIN projects ON projects.id = tasks.project_id
       WHERE tasks.id = ${id} AND projects.workspace_id = ${workspaceId}
+        AND (
+          ${canAccessEveryProject(actor)}
+          OR EXISTS (
+            SELECT 1
+            FROM project_members
+            WHERE project_members.project_id = projects.id
+              AND project_members.user_id = ${actor.id}
+          )
+        )
       LIMIT 1
     `;
     if (!existingRows.length) {
@@ -56,10 +68,19 @@ export async function PATCH(request: Request, context: RouteContext) {
       assignee: Task["assignee"];
       archived: boolean;
       project_id: string;
+      status: Task["status"];
+      recurrence: Task["recurrence"];
       assignee_ids: string[];
     };
     const nextAssignees =
       task.assignees?.length ? task.assignees : [task.assignee];
+    const dependencyIds = Array.from(
+      new Set((task.dependencyIds ?? []).map(String)),
+    ).filter((dependencyId) => dependencyId !== id);
+    const recurrence = task.recurrence ?? "none";
+    if (!["none", "daily", "weekly", "monthly"].includes(recurrence)) {
+      return NextResponse.json({ error: "Invalid recurrence" }, { status: 400 });
+    }
     const nextAssigneeIds = Array.from(
       new Set(nextAssignees.map((assignee) => assignee.id)),
     );
@@ -101,6 +122,15 @@ export async function PATCH(request: Request, context: RouteContext) {
       WHERE id = ${task.projectId}
         AND workspace_id = ${workspaceId}
         AND (${task.archived ?? false} OR archived = FALSE)
+        AND (
+          ${canAccessEveryProject(actor)}
+          OR EXISTS (
+            SELECT 1
+            FROM project_members
+            WHERE project_members.project_id = projects.id
+              AND project_members.user_id = ${actor.id}
+          )
+        )
       LIMIT 1
     `;
     if (!projectRows.length) {
@@ -138,6 +168,44 @@ export async function PATCH(request: Request, context: RouteContext) {
         );
       }
     }
+    if (dependencyIds.length) {
+      const dependencyRows = await sql`
+        SELECT tasks.id
+        FROM tasks
+        JOIN projects ON projects.id = tasks.project_id
+        WHERE tasks.id = ANY(${dependencyIds}::text[])
+          AND tasks.project_id = ${task.projectId}
+          AND projects.workspace_id = ${workspaceId}
+      `;
+      if (dependencyRows.length !== dependencyIds.length) {
+        return NextResponse.json(
+          { error: "Every dependency must belong to the same project" },
+          { status: 400 },
+        );
+      }
+      const cycleRows = await sql`
+        WITH RECURSIVE dependency_chain AS (
+          SELECT task_id, depends_on_id
+          FROM task_dependencies
+          WHERE task_id = ANY(${dependencyIds}::text[])
+          UNION
+          SELECT next_dependency.task_id, next_dependency.depends_on_id
+          FROM task_dependencies next_dependency
+          JOIN dependency_chain
+            ON next_dependency.task_id = dependency_chain.depends_on_id
+        )
+        SELECT 1
+        FROM dependency_chain
+        WHERE depends_on_id = ${id}
+        LIMIT 1
+      `;
+      if (cycleRows.length) {
+        return NextResponse.json(
+          { error: "Task dependencies cannot form a cycle" },
+          { status: 409 },
+        );
+      }
+    }
     const primaryAssignee =
       nextAssignees.find(
         (assignee) => assignee.id === nextAssigneeIds[0],
@@ -155,6 +223,7 @@ export async function PATCH(request: Request, context: RouteContext) {
         assignee_id = ${primaryAssignee.id},
         assignee = ${JSON.stringify(primaryAssignee)}::jsonb,
         parent_id = ${task.parentId ?? null},
+        recurrence = ${recurrence},
         due_date = ${task.dueDate}::date,
         tags = ${task.tags},
         progress = ${task.progress},
@@ -184,6 +253,14 @@ export async function PATCH(request: Request, context: RouteContext) {
           assigned_at = NOW()
       `;
     }
+    await sql`DELETE FROM task_dependencies WHERE task_id = ${id}`;
+    for (const dependencyId of dependencyIds) {
+      await sql`
+        INSERT INTO task_dependencies (task_id, depends_on_id, created_by)
+        VALUES (${id}, ${dependencyId}, ${actor.id})
+        ON CONFLICT (task_id, depends_on_id) DO NOTHING
+      `;
+    }
     await sql`
       INSERT INTO activity_logs (
         workspace_id, project_id, task_id, actor_id, event_type, payload
@@ -194,12 +271,39 @@ export async function PATCH(request: Request, context: RouteContext) {
         ${JSON.stringify({ title: task.title })}::jsonb
       )
     `;
+    const newlyAssigned = nextAssigneeIds.filter(
+      (assigneeId) => !existingAssigneeIds.includes(assigneeId),
+    );
+    if (newlyAssigned.length) {
+      await notifyUsers(sql, {
+        workspaceId,
+        userIds: newlyAssigned,
+        actorId: actor.id,
+        taskId: id,
+        type: "task.assigned",
+        title: `${actor.name} assigned you a task`,
+        body: task.title,
+      });
+    }
+    if (existing.status !== task.status) {
+      await notifyUsers(sql, {
+        workspaceId,
+        userIds: nextAssigneeIds,
+        actorId: actor.id,
+        taskId: id,
+        type: "task.status_changed",
+        title: `${actor.name} changed a task status`,
+        body: `${task.title}: ${existing.status} → ${task.status}`,
+      });
+    }
     return NextResponse.json({
       task: {
         ...task,
         assignee: primaryAssignee,
         assignees: nextAssignees,
         parentId: task.parentId ?? null,
+        dependencyIds,
+        recurrence,
       },
     });
   } catch (error) {

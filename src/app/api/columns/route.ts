@@ -5,6 +5,7 @@ import {
   getWorkspaceId,
 } from "@/lib/api-auth";
 import { getDatabase } from "@/lib/db";
+import { canAccessEveryProject } from "@/lib/permissions";
 import {
   CUSTOM_COLUMN_TYPES,
   type CustomColumn,
@@ -74,6 +75,15 @@ export async function GET(request: Request) {
       JOIN projects ON projects.id = custom_columns.project_id
       WHERE custom_columns.project_id = ${projectId}
         AND projects.workspace_id = ${workspaceId}
+        AND (
+          ${canAccessEveryProject(actor)}
+          OR EXISTS (
+            SELECT 1
+            FROM project_members
+            WHERE project_members.project_id = projects.id
+              AND project_members.user_id = ${actor.id}
+          )
+        )
       ORDER BY custom_columns.position ASC, custom_columns.created_at ASC
     `;
     return NextResponse.json({

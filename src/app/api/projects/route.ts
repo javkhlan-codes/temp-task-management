@@ -5,6 +5,7 @@ import {
   getWorkspaceId,
 } from "@/lib/api-auth";
 import { getDatabase } from "@/lib/db";
+import { canAccessEveryProject } from "@/lib/permissions";
 import type { Project } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -86,9 +87,18 @@ export async function GET(request: Request) {
     const rows = await sql(
       `${PROJECT_SELECT}
        WHERE projects.workspace_id = $1
+         AND (
+           $2::boolean
+           OR EXISTS (
+             SELECT 1
+             FROM project_members visible_members
+             WHERE visible_members.project_id = projects.id
+               AND visible_members.user_id = $3
+           )
+         )
        GROUP BY projects.id
        ORDER BY projects.archived ASC, projects.created_at ASC`,
-      [workspaceId],
+      [workspaceId, canAccessEveryProject(actor), actor.id],
     );
     return NextResponse.json({
       projects: rows.map((row) => rowToProject(row as never)),

@@ -51,10 +51,10 @@ export function RoleSwitcher({
         <div className="role-menu">
           <div className="role-menu-header">
             <div>
-              <span>Signed in to Acme Studio</span>
+              <span>Acme Studio-д нэвтэрсэн</span>
               <strong>{currentUser.email}</strong>
             </div>
-            <button onClick={() => setOpen(false)} aria-label="Close user menu">
+            <button onClick={() => setOpen(false)} aria-label="Хэрэглэгчийн цэс хаах">
               <X size={15} />
             </button>
           </div>
@@ -64,7 +64,7 @@ export function RoleSwitcher({
               <strong>{currentUser.name}</strong>
               <small>
                 <ShieldCheck size={11} />
-                {ROLE_LABELS[currentUser.role]} account
+                {ROLE_LABELS[currentUser.role]} эрх
               </small>
             </span>
           </div>
@@ -76,7 +76,7 @@ export function RoleSwitcher({
             }}
           >
             <Users size={15} />
-            Manage team & roles
+            Баг ба эрх удирдах
           </button>
           <button
             className="manage-team-link logout-link"
@@ -86,7 +86,7 @@ export function RoleSwitcher({
             }}
           >
             <LogOut size={15} />
-            Sign out
+            Гарах
           </button>
         </div>
       )}
