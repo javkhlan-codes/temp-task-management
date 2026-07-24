@@ -27,7 +27,6 @@ leak between projects. See [requirements](docs/REQUIREMENTS.md),
 
 ```bash
 npm install
-
 npm run dev
 ```
 
