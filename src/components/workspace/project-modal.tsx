@@ -85,14 +85,14 @@ export function ProjectModal({
         <div className="modal-header">
           <div>
             <span className="panel-kicker">
-              {project ? "Project settings" : "Workspace project"}
+              {project ? "Төслийн тохиргоо" : "Workspace төсөл"}
             </span>
             <h2>
               {project
                 ? readOnly
-                  ? "Project details"
-                  : "Edit project"
-                : "Create project"}
+                  ? "Төслийн мэдээлэл"
+                  : "Төсөл засах"
+                : "Төсөл үүсгэх"}
             </h2>
           </div>
           <button type="button" className="icon-button" onClick={onClose}>
@@ -102,26 +102,26 @@ export function ProjectModal({
 
         <fieldset className="project-modal-content" disabled={readOnly}>
           <label className="form-field">
-            <span>Project name</span>
+            <span>Төслийн нэр</span>
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="e.g. Website redesign"
+              placeholder="Жишээ: Вебсайт шинэчлэл"
               autoFocus
               required
             />
           </label>
           <label className="form-field">
-            <span>Description</span>
+            <span>Тайлбар</span>
             <textarea
               value={description}
               onChange={(event) => setDescription(event.target.value)}
-              placeholder="What outcome does this project own?"
+              placeholder="Энэ төслийн хүрэх үр дүн юу вэ?"
               rows={3}
             />
           </label>
           <div className="form-field">
-            <span>Color</span>
+            <span>Өнгө</span>
             <div className="project-color-grid">
               {PROJECT_COLORS.map((item) => (
                 <button
@@ -129,7 +129,7 @@ export function ProjectModal({
                   className={color === item ? "selected" : ""}
                   style={{ backgroundColor: item }}
                   onClick={() => setColor(item)}
-                  aria-label={`Select ${item}`}
+                  aria-label={`${item} өнгө сонгох`}
                   key={item}
                 >
                   {color === item && <Check size={14} />}
@@ -138,7 +138,7 @@ export function ProjectModal({
             </div>
           </div>
           <label className="form-field">
-            <span>Project owner</span>
+            <span>Төслийн эзэн</span>
             <select
               value={ownerId}
               onChange={(event) => setOwnerId(event.target.value)}
@@ -151,7 +151,7 @@ export function ProjectModal({
             </select>
           </label>
           <div className="form-field">
-            <span>Project members</span>
+            <span>Төслийн гишүүд</span>
             <div className="project-member-grid">
               {activeUsers.map((user) => {
                 const selected = memberIds.includes(user.id) || ownerId === user.id;
@@ -187,7 +187,7 @@ export function ProjectModal({
                 onClick={() => setArchived((value) => !value)}
               >
                 {archived ? <RotateCcw size={16} /> : <Archive size={16} />}
-                {archived ? "Restore project" : "Archive project"}
+                {archived ? "Төсөл сэргээх" : "Төсөл архивлах"}
               </button>
             )}
             {project && canDelete && project.archived && project.taskCount === 0 && (
@@ -195,23 +195,23 @@ export function ProjectModal({
                 type="button"
                 className="delete-button"
                 onClick={() => {
-                  if (window.confirm(`Permanently delete “${project.name}”?`)) {
+                  if (window.confirm(`“${project.name}” төслийг бүрмөсөн устгах уу?`)) {
                     onDelete(project);
                   }
                 }}
               >
                 <Trash2 size={16} />
-                Delete
+                Устгах
               </button>
             )}
           </div>
           <div>
             <button type="button" className="secondary-button" onClick={onClose}>
-              {readOnly ? "Close" : "Cancel"}
+              {readOnly ? "Хаах" : "Цуцлах"}
             </button>
             {!readOnly && (
               <button type="submit" className="primary-button">
-                {project ? "Save project" : "Create project"}
+                {project ? "Төсөл хадгалах" : "Төсөл үүсгэх"}
               </button>
             )}
           </div>

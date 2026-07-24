@@ -1,4 +1,4 @@
-# Nimbus functional requirements
+# Pro Team functional requirements
 
 ## Workspace and users
 

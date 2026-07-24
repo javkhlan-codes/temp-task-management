@@ -33,6 +33,18 @@ export async function GET(request: Request) {
       JOIN workspace_members
         ON workspace_members.user_id = users.id
       WHERE workspace_members.workspace_id = ${workspaceId}
+        AND (
+          ${actor.role !== "guest" && actor.role !== "viewer"}
+          OR workspace_members.user_id = ${actor.id}
+          OR EXISTS (
+            SELECT 1
+            FROM project_members actor_projects
+            JOIN project_members visible_projects
+              ON visible_projects.project_id = actor_projects.project_id
+            WHERE actor_projects.user_id = ${actor.id}
+              AND visible_projects.user_id = workspace_members.user_id
+          )
+        )
       ORDER BY workspace_members.active DESC, users.name ASC
     `;
     return NextResponse.json({

@@ -3,6 +3,7 @@
 import {
   Activity,
   Archive,
+  BarChart3,
   Bell,
   CalendarDays,
   Check,
@@ -16,7 +17,9 @@ import {
   Columns3,
   Command,
   Filter,
+  FileDown,
   FolderKanban,
+  GanttChart,
   Grid2X2,
   Hash,
   Inbox,
@@ -31,7 +34,6 @@ import {
   RotateCcw,
   Search,
   Settings,
-  Sparkles,
   Sun,
   Target,
   Trash2,
@@ -56,8 +58,11 @@ import {
 } from "@/lib/permissions";
 import {
   CUSTOM_COLUMN_TYPES,
+  PRIORITY_LABELS,
   PRIORITIES,
+  STATUS_LABELS,
   STATUSES,
+  groupLabel,
   type CustomColumn,
   type CustomColumnType,
   type CustomFieldValue,
@@ -65,14 +70,18 @@ import {
   type Task,
   type TaskDraft,
   type TaskPriority,
+  type TaskRecurrence,
   type TaskStatus,
   type ViewMode,
+  type WorkspaceSummary,
   type WorkspaceUser,
 } from "@/lib/types";
 import { RoleSwitcher } from "@/components/workspace/role-switcher";
 import { TeamManagementModal } from "@/components/workspace/team-management-modal";
 import { ProjectModal } from "@/components/workspace/project-modal";
 import { LoginScreen } from "@/components/auth/login-screen";
+import { NotificationCenter } from "@/components/task-manager/notification-center";
+import { TaskCollaboration } from "@/components/task-manager/task-collaboration";
 
 const STORAGE_KEY = "nimbus-tasks-v1";
 const COLUMNS_STORAGE_KEY = "nimbus-columns-v1";
@@ -136,6 +145,8 @@ function normalizeTask(task: Task): Task {
     ...task,
     assignees: taskAssignees(task),
     parentId: task.parentId ?? null,
+    dependencyIds: task.dependencyIds ?? [],
+    recurrence: task.recurrence ?? "none",
     customFields: task.customFields ?? {},
   };
 }
@@ -148,6 +159,20 @@ export function TaskManager() {
   const [currentUser, setCurrentUser] = useState<WorkspaceUser>(
     WORKSPACE_USERS[0],
   );
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([
+    {
+      id: "workspace-acme",
+      name: "Acme Studio",
+      slug: "acme-studio",
+      plan: "free",
+      role: "admin",
+      createdAt: "2026-07-01T00:00:00.000Z",
+    },
+  ]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState("workspace-acme");
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [mode, setMode] = useState<PersistenceMode>("loading");
@@ -157,6 +182,11 @@ export function TaskManager() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "All">("All");
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "All">("All");
+  const [assigneeFilter, setAssigneeFilter] = useState("All");
+  const [tagFilter, setTagFilter] = useState("All");
+  const [dueFilter, setDueFilter] = useState<
+    "All" | "overdue" | "today" | "week"
+  >("All");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
@@ -171,6 +201,60 @@ export function TaskManager() {
   );
   const [toast, setToast] = useState("");
   const [month, setMonth] = useState(() => new Date(2026, 6, 1));
+
+  const loadWorkspaceData = useCallback(
+    async (workspaceId: string, actorId: string) => {
+      const requestOptions: RequestInit = {
+        cache: "no-store",
+        headers: {
+          "x-workspace-user-id": actorId,
+          "x-workspace-id": workspaceId,
+        },
+      };
+      const [tasksResponse, projectsResponse, usersResponse] = await Promise.all([
+        fetch("/api/tasks", requestOptions),
+        fetch("/api/projects", requestOptions),
+        fetch("/api/users", requestOptions),
+      ]);
+      if (!tasksResponse.ok || !projectsResponse.ok || !usersResponse.ok) {
+        return false;
+      }
+      const [tasksPayload, projectsPayload, usersPayload] = (await Promise.all([
+        tasksResponse.json(),
+        projectsResponse.json(),
+        usersResponse.json(),
+      ])) as [
+        { tasks: Task[] },
+        { projects: Project[] },
+        { users: WorkspaceUser[] },
+      ];
+      const loadedUsers = usersPayload.users;
+      const loadedProjects = projectsPayload.projects;
+      const selectedProject = loadedProjects.find((project) => !project.archived);
+      const columnsResponse = selectedProject
+        ? await fetch(
+            `/api/columns?projectId=${encodeURIComponent(selectedProject.id)}`,
+            requestOptions,
+          )
+        : null;
+      const columnsPayload = columnsResponse?.ok
+        ? ((await columnsResponse.json()) as { columns: CustomColumn[] })
+        : { columns: [] };
+      setTasks(tasksPayload.tasks.map(normalizeTask));
+      setProjects(loadedProjects);
+      setActiveProject(selectedProject?.id ?? "All tasks");
+      setColumns(columnsPayload.columns);
+      setUsers(loadedUsers);
+      setCurrentUser(
+        loadedUsers.find((user) => user.id === actorId && user.active) ??
+          loadedUsers[0] ??
+          WORKSPACE_USERS[0],
+      );
+      setMode("database");
+      return true;
+    },
+    [],
+  );
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("nimbus-theme");
@@ -210,54 +294,25 @@ export function TaskManager() {
       }
 
       const actorId = sessionUser.id;
-      const requestOptions: RequestInit = {
-        cache: "no-store",
-        headers: { "x-workspace-user-id": actorId },
-      };
+      let selectedWorkspaceId = "workspace-acme";
       try {
-        const [tasksResponse, projectsResponse, usersResponse] = await Promise.all([
-          fetch("/api/tasks", requestOptions),
-          fetch("/api/projects", requestOptions),
-          fetch("/api/users", requestOptions),
-        ]);
-        if (tasksResponse.ok && projectsResponse.ok && usersResponse.ok) {
-          const [tasksPayload, projectsPayload, usersPayload] = (await Promise.all([
-            tasksResponse.json(),
-            projectsResponse.json(),
-            usersResponse.json(),
-          ])) as [
-            { tasks: Task[] },
-            { projects: Project[] },
-            { users: WorkspaceUser[] },
-          ];
-          const loadedUsers = usersPayload.users;
-          const loadedProjects = projectsPayload.projects;
-          const selectedProject =
-            loadedProjects.find((project) => project.id === activeProject) ??
-            loadedProjects.find((project) => !project.archived);
-          const columnsResponse = selectedProject
-            ? await fetch(
-                `/api/columns?projectId=${encodeURIComponent(selectedProject.id)}`,
-                requestOptions,
-              )
-            : null;
-          const columnsPayload =
-            columnsResponse?.ok
-              ? ((await columnsResponse.json()) as { columns: CustomColumn[] })
-              : { columns: [] };
-          setTasks(
-            tasksPayload.tasks.map(normalizeTask),
-          );
-          setProjects(loadedProjects);
-          if (selectedProject) setActiveProject(selectedProject.id);
-          setColumns(columnsPayload.columns);
-          setUsers(loadedUsers);
-          setCurrentUser(
-            loadedUsers.find((user) => user.id === actorId && user.active) ??
-              loadedUsers.find((user) => user.role === "admin" && user.active) ??
-              WORKSPACE_USERS[0],
-          );
-          setMode("database");
+        const workspacesResponse = await fetch("/api/workspaces", {
+          cache: "no-store",
+        });
+        if (workspacesResponse.ok) {
+          const payload = (await workspacesResponse.json()) as {
+            workspaces: WorkspaceSummary[];
+          };
+          if (payload.workspaces.length) {
+            setWorkspaces(payload.workspaces);
+            const savedWorkspaceId = localStorage.getItem("nimbus-workspace-id");
+            selectedWorkspaceId =
+              payload.workspaces.find((item) => item.id === savedWorkspaceId)?.id ??
+              payload.workspaces[0].id;
+            setActiveWorkspaceId(selectedWorkspaceId);
+          }
+        }
+        if (await loadWorkspaceData(selectedWorkspaceId, actorId)) {
           setSessionReady(true);
           return;
         }
@@ -315,7 +370,7 @@ export function TaskManager() {
     };
 
     void load();
-  }, []);
+  }, [loadWorkspaceData]);
 
   useEffect(() => {
     if (mode === "local") {
@@ -341,7 +396,10 @@ export function TaskManager() {
         `/api/columns?projectId=${encodeURIComponent(project.id)}`,
         {
           cache: "no-store",
-          headers: { "x-workspace-user-id": currentUser.id },
+          headers: {
+            "x-workspace-user-id": currentUser.id,
+            "x-workspace-id": activeWorkspaceId,
+          },
         },
       );
       if (!response.ok) return;
@@ -352,7 +410,7 @@ export function TaskManager() {
       ]);
     };
     void loadColumns();
-  }, [activeProject, currentUser.id, mode, projects]);
+  }, [activeProject, activeWorkspaceId, currentUser.id, mode, projects]);
 
   const syncTask = useCallback(
     async (method: "POST" | "PATCH" | "DELETE", task: Task) => {
@@ -364,16 +422,17 @@ export function TaskManager() {
           headers: {
             "Content-Type": "application/json",
             "x-workspace-user-id": currentUser.id,
+            "x-workspace-id": activeWorkspaceId,
           },
           body: method === "DELETE" ? undefined : JSON.stringify(task),
         });
-        if (!response.ok) throw new Error("Sync failed");
+        if (!response.ok) throw new Error("Синк хийхэд алдаа гарлаа");
       } catch {
         setMode("local");
-        setToast("Database unavailable — changes saved on this device");
+        setToast("Database холбогдохгүй байна — өөрчлөлтийг төхөөрөмжид хадгаллаа");
       }
     },
-    [currentUser.id, mode],
+    [activeWorkspaceId, currentUser.id, mode],
   );
 
   const syncColumn = useCallback(
@@ -387,16 +446,17 @@ export function TaskManager() {
           headers: {
             "Content-Type": "application/json",
             "x-workspace-user-id": currentUser.id,
+            "x-workspace-id": activeWorkspaceId,
           },
           body: method === "DELETE" ? undefined : JSON.stringify(column),
         });
-        if (!response.ok) throw new Error("Column sync failed");
+        if (!response.ok) throw new Error("Багана синк хийхэд алдаа гарлаа");
       } catch {
         setMode("local");
-        setToast("Database unavailable — column saved on this device");
+        setToast("Database холбогдохгүй байна — баганыг төхөөрөмжид хадгаллаа");
       }
     },
-    [currentUser.id, mode],
+    [activeWorkspaceId, currentUser.id, mode],
   );
 
   const syncUser = useCallback(
@@ -409,18 +469,19 @@ export function TaskManager() {
           headers: {
             "Content-Type": "application/json",
             "x-workspace-user-id": currentUser.id,
+            "x-workspace-id": activeWorkspaceId,
           },
           body: method === "DELETE" ? undefined : JSON.stringify(user),
         });
         const payload = (await response.json()) as { error?: string };
-        if (!response.ok) throw new Error(payload.error ?? "User sync failed");
+        if (!response.ok) throw new Error(payload.error ?? "Хэрэглэгч синк хийхэд алдаа гарлаа");
         return true;
       } catch (error) {
-        setToast(error instanceof Error ? error.message : "Unable to update user");
+        setToast(error instanceof Error ? error.message : "Хэрэглэгчийг шинэчлэх боломжгүй");
         return false;
       }
     },
-    [currentUser.id, mode],
+    [activeWorkspaceId, currentUser.id, mode],
   );
 
   const syncProject = useCallback(
@@ -434,6 +495,7 @@ export function TaskManager() {
           headers: {
             "Content-Type": "application/json",
             "x-workspace-user-id": currentUser.id,
+            "x-workspace-id": activeWorkspaceId,
           },
           body: method === "DELETE" ? undefined : JSON.stringify(project),
         });
@@ -441,21 +503,69 @@ export function TaskManager() {
           project?: Project;
           error?: string;
         };
-        if (!response.ok) throw new Error(payload.error ?? "Project sync failed");
+        if (!response.ok) throw new Error(payload.error ?? "Төсөл синк хийхэд алдаа гарлаа");
         return payload.project ?? true;
       } catch (error) {
-        setToast(error instanceof Error ? error.message : "Unable to update project");
+        setToast(error instanceof Error ? error.message : "Төслийг шинэчлэх боломжгүй");
         return false;
       }
     },
-    [currentUser.id, mode],
+    [activeWorkspaceId, currentUser.id, mode],
   );
+
+  const switchWorkspace = async (workspaceId: string) => {
+    if (workspaceId === activeWorkspaceId) {
+      setWorkspaceMenuOpen(false);
+      return;
+    }
+    setMode("loading");
+    const loaded = await loadWorkspaceData(workspaceId, currentUser.id);
+    if (!loaded) {
+      setMode("database");
+      setToast("Workspace мэдээллийг ачаалах боломжгүй");
+      return;
+    }
+    setActiveWorkspaceId(workspaceId);
+    localStorage.setItem("nimbus-workspace-id", workspaceId);
+    setWorkspaceMenuOpen(false);
+    setEditingTask(null);
+    setEditingProject(null);
+    setToast("Workspace солигдлоо");
+  };
+
+  const createWorkspace = async () => {
+    const name = newWorkspaceName.trim();
+    if (name.length < 2 || creatingWorkspace) return;
+    setCreatingWorkspace(true);
+    try {
+      const response = await fetch("/api/workspaces", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const payload = (await response.json()) as {
+        workspace?: WorkspaceSummary;
+        error?: string;
+      };
+      if (!response.ok || !payload.workspace) {
+        throw new Error(payload.error ?? "Workspace үүсгэх боломжгүй");
+      }
+      setWorkspaces((current) => [...current, payload.workspace as WorkspaceSummary]);
+      setNewWorkspaceName("");
+      await switchWorkspace(payload.workspace.id);
+      setToast("Шинэ workspace үүслээ");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Workspace үүсгэх боломжгүй");
+    } finally {
+      setCreatingWorkspace(false);
+    }
+  };
 
   const saveTask = (draft: TaskDraft, id?: string) => {
     if (id) {
       const existingTask = tasks.find((task) => task.id === id);
       if (!existingTask || !canEditTask(currentUser, existingTask)) {
-        setToast("Your role cannot edit this task");
+        setToast("Таны эрх энэ таскийг засах боломжгүй");
         return;
       }
       const updated = normalizeTask({
@@ -467,10 +577,10 @@ export function TaskManager() {
       });
       setTasks((current) => current.map((task) => (task.id === id ? updated : task)));
       void syncTask("PATCH", updated);
-      setToast("Task updated");
+      setToast("Таск шинэчлэгдлээ");
     } else {
       if (!hasPermission(currentUser, "createTask")) {
-        setToast(`${ROLE_LABELS[currentUser.role]} is a read-only role`);
+        setToast(`${ROLE_LABELS[currentUser.role]} нь зөвхөн унших эрхтэй`);
         return;
       }
       const effectiveDraft = hasPermission(currentUser, "assignTasks")
@@ -485,7 +595,7 @@ export function TaskManager() {
       });
       setTasks((current) => [task, ...current]);
       void syncTask("POST", task);
-      setToast("New task created");
+      setToast("Шинэ таск үүслээ");
     }
     setNewTaskOpen(false);
     setEditingTask(null);
@@ -496,7 +606,7 @@ export function TaskManager() {
     const existing = tasks.find((task) => task.id === id);
     if (!existing) return;
     if (!canEditTask(currentUser, existing)) {
-      setToast("You can only edit tasks assigned to you");
+      setToast("Та зөвхөн өөрт хуваарилагдсан таскийг засна");
       return;
     }
     const updated = normalizeTask({ ...existing, ...changes });
@@ -530,7 +640,7 @@ export function TaskManager() {
 
   const createSubtask = (parent: Task, title: string) => {
     if (!hasPermission(currentUser, "createTask")) {
-      setToast("Your role cannot create subtasks");
+      setToast("Таны эрх дэд таск үүсгэх боломжгүй");
       return;
     }
     const assignees = hasPermission(currentUser, "assignTasks")
@@ -546,6 +656,8 @@ export function TaskManager() {
       assignee: assignees[0],
       assignees,
       parentId: parent.id,
+      dependencyIds: [],
+      recurrence: "none",
       progress: 0,
       customFields: {},
       archived: false,
@@ -554,18 +666,18 @@ export function TaskManager() {
     };
     setTasks((current) => [...current, subtask]);
     void syncTask("POST", subtask);
-    setToast("Subtask added");
+    setToast("Дэд таск нэмэгдлээ");
   };
 
   const deleteTask = (task: Task) => {
     if (!hasPermission(currentUser, "deleteTask")) {
-      setToast("Only an admin can permanently delete tasks");
+      setToast("Зөвхөн админ таскийг бүрмөсөн устгана");
       return;
     }
     setTasks((current) => current.filter((item) => item.id !== task.id));
     void syncTask("DELETE", task);
     setEditingTask(null);
-    setToast("Task deleted");
+    setToast("Таск устгагдлаа");
   };
 
   const saveColumn = (
@@ -573,7 +685,7 @@ export function TaskManager() {
     id?: string,
   ) => {
     if (!hasPermission(currentUser, "manageColumns")) {
-      setToast("Your role cannot manage columns");
+      setToast("Таны эрх багана удирдах боломжгүй");
       return;
     }
     if (id) {
@@ -584,11 +696,11 @@ export function TaskManager() {
         items.map((column) => (column.id === id ? updated : column)),
       );
       void syncColumn("PATCH", updated);
-      setToast("Column updated");
+      setToast("Багана шинэчлэгдлээ");
     } else {
       const project = projects.find((item) => item.id === activeProject);
       if (!project) {
-        setToast("Open a project before adding a column");
+        setToast("Багана нэмэхийн өмнө төсөл нээнэ үү");
         return;
       }
       const column: CustomColumn = {
@@ -600,14 +712,14 @@ export function TaskManager() {
       };
       setColumns((items) => [...items, column]);
       void syncColumn("POST", column);
-      setToast("Column added");
+      setToast("Багана нэмэгдлээ");
     }
     setEditingColumn(null);
   };
 
   const deleteColumn = (column: CustomColumn) => {
     if (!hasPermission(currentUser, "manageColumns")) {
-      setToast("Your role cannot remove columns");
+      setToast("Таны эрх багана устгах боломжгүй");
       return;
     }
     setColumns((items) => items.filter((item) => item.id !== column.id));
@@ -620,7 +732,7 @@ export function TaskManager() {
     );
     void syncColumn("DELETE", column);
     setEditingColumn(null);
-    setToast("Column removed");
+    setToast("Багана устгагдлаа");
   };
 
   const updateCustomField = (
@@ -637,7 +749,7 @@ export function TaskManager() {
 
   const archiveTask = (task: Task, archived: boolean) => {
     if (!hasPermission(currentUser, "archiveTask")) {
-      setToast("Your role cannot archive or restore tasks");
+      setToast("Таны эрх таск архивлах эсвэл сэргээх боломжгүй");
       return;
     }
     const updated: Task = {
@@ -648,12 +760,12 @@ export function TaskManager() {
     setTasks((items) => items.map((item) => (item.id === task.id ? updated : item)));
     void syncTask("PATCH", updated);
     setEditingTask(null);
-    setToast(archived ? "Task archived" : "Task restored");
+    setToast(archived ? "Таск архивлагдлаа" : "Таск сэргээгдлээ");
   };
 
   const saveWorkspaceUser = async (user: WorkspaceUser, isNew: boolean) => {
     if (!hasPermission(currentUser, "manageUsers")) {
-      setToast("Only an admin can manage workspace access");
+      setToast("Зөвхөн админ workspace хандалтыг удирдана");
       return;
     }
     const success = await syncUser(isNew ? "POST" : "PATCH", user);
@@ -663,12 +775,12 @@ export function TaskManager() {
         ? [...items, user]
         : items.map((item) => (item.id === user.id ? user : item)),
     );
-    setToast(isNew ? "Team member added" : "Member role updated");
+    setToast(isNew ? "Багийн гишүүн нэмэгдлээ" : "Гишүүний эрх шинэчлэгдлээ");
   };
 
   const deactivateWorkspaceUser = async (user: WorkspaceUser) => {
     if (!hasPermission(currentUser, "manageUsers")) {
-      setToast("Only an admin can manage workspace access");
+      setToast("Зөвхөн админ workspace хандалтыг удирдана");
       return;
     }
     const success = await syncUser("DELETE", user);
@@ -676,7 +788,7 @@ export function TaskManager() {
     setUsers((items) =>
       items.map((item) => (item.id === user.id ? { ...item, active: false } : item)),
     );
-    setToast("Team member deactivated");
+    setToast("Багийн гишүүн идэвхгүй боллоо");
   };
 
   const authenticated = (_user: WorkspaceUser) => {
@@ -700,7 +812,7 @@ export function TaskManager() {
     const existing = id ? projects.find((project) => project.id === id) : null;
     const requiredPermission = existing ? "editProject" : "createProject";
     if (!hasPermission(currentUser, requiredPermission)) {
-      setToast("Your role cannot manage projects");
+      setToast("Таны эрх төсөл удирдах боломжгүй");
       return;
     }
     const now = new Date().toISOString();
@@ -729,12 +841,12 @@ export function TaskManager() {
         : saved.id,
     );
     setEditingProject(null);
-    setToast(existing ? "Project updated" : "Project created");
+    setToast(existing ? "Төсөл шинэчлэгдлээ" : "Төсөл үүслээ");
   };
 
   const deleteProject = async (project: Project) => {
     if (!hasPermission(currentUser, "deleteProject")) {
-      setToast("Only an admin can permanently delete projects");
+      setToast("Зөвхөн админ төслийг бүрмөсөн устгана");
       return;
     }
     const success = await syncProject("DELETE", project);
@@ -745,12 +857,17 @@ export function TaskManager() {
         "all",
     );
     setEditingProject(null);
-    setToast("Project deleted");
+    setToast("Төсөл устгагдлаа");
   };
 
   const openNewTask = () => {
     if (!hasPermission(currentUser, "createTask")) {
-      setToast(`${ROLE_LABELS[currentUser.role]} has read-only access`);
+      setToast(`${ROLE_LABELS[currentUser.role]} нь зөвхөн унших эрхтэй`);
+      return;
+    }
+    if (!projects.some((project) => !project.archived)) {
+      setToast("Эхлээд төсөл үүсгэнэ үү");
+      setEditingProject("new");
       return;
     }
     setNewTaskOpen(true);
@@ -761,6 +878,52 @@ export function TaskManager() {
     setTheme(nextTheme);
     localStorage.setItem("nimbus-theme", nextTheme);
     document.documentElement.dataset.theme = nextTheme;
+  };
+
+  const exportTasksCsv = () => {
+    const escapeCell = (value: string | number) => {
+      let text = String(value);
+      if (/^[=+\-@]/.test(text)) text = `'${text}`;
+      return `"${text.replaceAll('"', '""')}"`;
+    };
+    const headers = [
+      "Таск",
+      "Төсөл",
+      "Бүлэг",
+      "Төлөв",
+      "Ач холбогдол",
+      "Хариуцагч",
+      "Эцсийн хугацаа",
+      "Таг",
+      "Гүйцэтгэл",
+    ];
+    const rows = visibleTasks
+      .filter((task) => !task.parentId)
+      .map((task) => [
+        task.title,
+        task.project,
+        groupLabel(task.group),
+        STATUS_LABELS[task.status],
+        PRIORITY_LABELS[task.priority],
+        taskAssignees(task)
+          .map((assignee) => assignee.name)
+          .join(", "),
+        task.dueDate,
+        task.tags.join(", "),
+        `${task.progress}%`,
+      ]);
+    const csv = [headers, ...rows]
+      .map((row) => row.map(escapeCell).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(
+      new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }),
+    );
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `tasks-${new Date().toISOString().slice(0, 10)}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setToast("CSV тайлан татагдлаа");
   };
 
   const projectTasks = useMemo(
@@ -783,13 +946,26 @@ export function TaskManager() {
 
   const visibleTasks = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Ulaanbaatar",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const weekEnd = new Date(`${today}T00:00:00+08:00`);
+    weekEnd.setDate(weekEnd.getDate() + 7);
     const directMatches = projectTasks.filter((task) => {
       const matchesQuery =
         !normalizedQuery ||
         [
           task.title,
+          task.description,
           task.project,
+          task.group,
+          task.status,
+          task.priority,
           ...taskAssignees(task).map((assignee) => assignee.name),
+          ...taskAssignees(task).map((assignee) => assignee.email),
           ...task.tags,
         ]
           .join(" ")
@@ -798,7 +974,26 @@ export function TaskManager() {
       const matchesStatus = statusFilter === "All" || task.status === statusFilter;
       const matchesPriority =
         priorityFilter === "All" || task.priority === priorityFilter;
-      return matchesQuery && matchesStatus && matchesPriority;
+      const matchesAssignee =
+        assigneeFilter === "All" ||
+        taskAssignees(task).some((assignee) => assignee.id === assigneeFilter);
+      const matchesTag = tagFilter === "All" || task.tags.includes(tagFilter);
+      const taskDue = new Date(`${task.dueDate}T23:59:59+08:00`);
+      const matchesDue =
+        dueFilter === "All" ||
+        (dueFilter === "overdue" && isOverdue(task.dueDate, task.status)) ||
+        (dueFilter === "today" && task.dueDate === today) ||
+        (dueFilter === "week" &&
+          task.dueDate >= today &&
+          taskDue.getTime() <= weekEnd.getTime());
+      return (
+        matchesQuery &&
+        matchesStatus &&
+        matchesPriority &&
+        matchesAssignee &&
+        matchesTag &&
+        matchesDue
+      );
     });
     const parentIds = new Set(
       directMatches
@@ -809,7 +1004,23 @@ export function TaskManager() {
     return projectTasks.filter(
       (task) => matchIds.has(task.id) || parentIds.has(task.id),
     );
-  }, [priorityFilter, projectTasks, query, statusFilter]);
+  }, [
+    assigneeFilter,
+    dueFilter,
+    priorityFilter,
+    projectTasks,
+    query,
+    statusFilter,
+    tagFilter,
+  ]);
+
+  const availableTags = useMemo(
+    () =>
+      Array.from(new Set(projectTasks.flatMap((task) => task.tags))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [projectTasks],
+  );
 
   const summaryTasks = projectTasks.filter((task) => !task.parentId);
   const doneCount = summaryTasks.filter((task) => task.status === "Done").length;
@@ -826,12 +1037,17 @@ export function TaskManager() {
   const activeProjectRecord = projects.find(
     (project) => project.id === activeProject,
   );
+  const activeWorkspace =
+    workspaces.find((workspace) => workspace.id === activeWorkspaceId) ??
+    workspaces[0];
   const projectName =
-    activeProject === "All tasks" ||
-    activeProject === "My work" ||
-    activeProject === "Archive"
-      ? activeProject
-      : activeProjectRecord?.name ?? "Projects";
+    activeProject === "All tasks"
+      ? "Бүх таск"
+      : activeProject === "My work"
+        ? "Миний ажил"
+        : activeProject === "Archive"
+          ? "Архив"
+          : activeProjectRecord?.name ?? "Төслүүд";
   const projectColumns = activeProjectRecord
     ? columns
         .filter((column) => column.projectId === activeProjectRecord.id)
@@ -841,10 +1057,10 @@ export function TaskManager() {
   if (!sessionReady) {
     return (
       <div className="app-loading">
-        <span className="brand-icon">
-          <Sparkles size={18} />
+        <span className="brand-icon" aria-hidden="true">
+          <img src="/pro-team-logo.png" alt="" />
         </span>
-        <strong>Opening Nimbus…</strong>
+        <strong>Pro Team нээж байна…</strong>
       </div>
     );
   }
@@ -864,29 +1080,90 @@ export function TaskManager() {
     <div className="app-shell">
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
         <div className="brand-row">
-          <div className="brand-icon">
-            <Sparkles size={18} strokeWidth={2.5} />
+          <div className="brand-icon" aria-hidden="true">
+            <img src="/pro-team-logo.png" alt="" />
           </div>
-          <span className="brand-name">nimbus</span>
+          <span className="brand-name">Pro Team</span>
           <button
             className="icon-button sidebar-close"
             onClick={() => setSidebarOpen(false)}
-            aria-label="Close sidebar"
+            aria-label="Хажуу цэс хаах"
           >
             <X size={19} />
           </button>
         </div>
 
-        <button className="workspace-switcher">
-          <span className="workspace-logo">AC</span>
-          <span>
-            <strong>Acme Studio</strong>
-            <small>Free workspace</small>
-          </span>
-          <ChevronsUpDown size={16} />
-        </button>
+        <div className="workspace-switcher-wrap">
+          <button
+            className="workspace-switcher"
+            onClick={() => setWorkspaceMenuOpen((current) => !current)}
+            aria-expanded={workspaceMenuOpen}
+          >
+            <span className="workspace-logo">
+              {activeWorkspace?.name
+                .split(/\s+/)
+                .slice(0, 2)
+                .map((part) => part[0]?.toUpperCase())
+                .join("") || "WS"}
+            </span>
+            <span>
+              <strong>{activeWorkspace?.name ?? "Workspace"}</strong>
+              <small>{activeWorkspace?.plan === "free" ? "Үнэгүй" : activeWorkspace?.plan}</small>
+            </span>
+            <ChevronsUpDown size={16} />
+          </button>
+          {workspaceMenuOpen && (
+            <div className="workspace-menu">
+              <div className="workspace-menu-heading">
+                <span>Таны workspace</span>
+                <small>{workspaces.length}</small>
+              </div>
+              {workspaces.map((workspace) => (
+                <button
+                  className={workspace.id === activeWorkspaceId ? "active" : ""}
+                  onClick={() => void switchWorkspace(workspace.id)}
+                  key={workspace.id}
+                >
+                  <span className="workspace-logo">
+                    {workspace.name
+                      .split(/\s+/)
+                      .slice(0, 2)
+                      .map((part) => part[0]?.toUpperCase())
+                      .join("")}
+                  </span>
+                  <span>
+                    <strong>{workspace.name}</strong>
+                    <small>{ROLE_LABELS[workspace.role]}</small>
+                  </span>
+                  {workspace.id === activeWorkspaceId && <Check size={14} />}
+                </button>
+              ))}
+              <div className="workspace-create">
+                <input
+                  value={newWorkspaceName}
+                  onChange={(event) => setNewWorkspaceName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void createWorkspace();
+                    }
+                  }}
+                  placeholder="Шинэ workspace нэр"
+                  maxLength={80}
+                />
+                <button
+                  onClick={() => void createWorkspace()}
+                  disabled={newWorkspaceName.trim().length < 2 || creatingWorkspace}
+                  aria-label="Workspace үүсгэх"
+                >
+                  <Plus size={15} />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
-        <nav className="main-nav" aria-label="Main navigation">
+        <nav className="main-nav" aria-label="Үндсэн цэс">
           <button
             className={`nav-item ${activeProject === "My work" ? "active" : ""}`}
             onClick={() => {
@@ -895,7 +1172,7 @@ export function TaskManager() {
             }}
           >
             <Inbox size={18} />
-            <span>My work</span>
+            <span>Миний ажил</span>
             <span className="nav-count">
               {
                 tasks.filter(
@@ -911,19 +1188,19 @@ export function TaskManager() {
           </button>
           <button className="nav-item">
             <Bell size={18} />
-            <span>Inbox</span>
+            <span>Ирсэн</span>
             <span className="nav-dot" />
           </button>
           <button className="nav-item">
             <MessageSquareText size={18} />
-            <span>Messages</span>
+            <span>Мессеж</span>
           </button>
         </nav>
 
         <div className="sidebar-section">
           <div className="section-label">
             <span>Workspace</span>
-            <button aria-label="Add workspace item">
+            <button aria-label="Workspace зүйл нэмэх">
               <Plus size={15} />
             </button>
           </div>
@@ -935,7 +1212,7 @@ export function TaskManager() {
             }}
           >
             <Grid2X2 size={18} />
-            <span>All tasks</span>
+            <span>Бүх таск</span>
             <span className="nav-count">
               {tasks.filter((task) => !task.archived && !task.parentId).length}
             </span>
@@ -948,7 +1225,7 @@ export function TaskManager() {
             }}
           >
             <Users size={18} />
-            <span>Team directory</span>
+            <span>Багийн гишүүд</span>
           </button>
           <button
             className={`nav-item ${activeProject === "Archive" ? "active" : ""}`}
@@ -958,7 +1235,7 @@ export function TaskManager() {
             }}
           >
             <Archive size={18} />
-            <span>Archive</span>
+            <span>Архив</span>
             <span className="nav-count">
               {tasks.filter((task) => task.archived).length}
             </span>
@@ -967,14 +1244,14 @@ export function TaskManager() {
 
         <div className="sidebar-section projects-section">
           <div className="section-label">
-            <span>Projects</span>
+            <span>Төслүүд</span>
             <button
-              aria-label="Create project"
+              aria-label="Төсөл үүсгэх"
               onClick={() => {
                 if (hasPermission(currentUser, "createProject")) {
                   setEditingProject("new");
                 } else {
-                  setToast("Your role cannot create projects");
+                  setToast("Таны эрх төсөл үүсгэх боломжгүй");
                 }
               }}
             >
@@ -1012,7 +1289,7 @@ export function TaskManager() {
               }}
             >
               <Archive size={16} />
-              <span>Archived projects</span>
+              <span>Архивласан төсөл</span>
               <span className="nav-count">
                 {projects.filter((project) => project.archived).length}
               </span>
@@ -1025,13 +1302,13 @@ export function TaskManager() {
             <div className="invite-art">
               <Users size={19} />
             </div>
-            <strong>Bring your team</strong>
-            <span>Work moves faster together.</span>
-            <button>Invite teammates</button>
+            <strong>Багаа уриарай</strong>
+            <span>Хамтдаа ажил илүү хурдан урагшилна.</span>
+            <button>Гишүүн урих</button>
           </div>
           <button className="nav-item">
             <CircleHelp size={18} />
-            <span>Help & support</span>
+            <span>Тусламж</span>
           </button>
         </div>
       </aside>
@@ -1040,7 +1317,7 @@ export function TaskManager() {
         <button
           className="sidebar-backdrop"
           onClick={() => setSidebarOpen(false)}
-          aria-label="Close navigation"
+          aria-label="Цэс хаах"
         />
       )}
 
@@ -1049,7 +1326,7 @@ export function TaskManager() {
           <button
             className="icon-button mobile-menu"
             onClick={() => setSidebarOpen(true)}
-            aria-label="Open navigation"
+            aria-label="Цэс нээх"
           >
             <Menu size={21} />
           </button>
@@ -1057,9 +1334,13 @@ export function TaskManager() {
             <Search size={17} />
             <input
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search tasks, people, or projects..."
-              aria-label="Search"
+              onChange={(event) => {
+                const value = event.target.value;
+                setQuery(value);
+                if (value.trim()) setActiveProject("All tasks");
+              }}
+              placeholder="Таск, хүн, төсөл хайх..."
+              aria-label="Хайх"
             />
             <kbd>
               <Command size={11} /> K
@@ -1069,29 +1350,34 @@ export function TaskManager() {
             <span className={`sync-indicator ${mode}`}>
               <span />
               {mode === "database"
-                ? "Neon connected"
+                ? "Neon холбогдсон"
                 : mode === "local"
-                  ? "Demo mode"
-                  : "Connecting"}
+                  ? "Demo горим"
+                  : "Холбож байна"}
             </span>
             <button
               className="icon-button"
               onClick={toggleTheme}
-              aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}
+              aria-label={`${theme === "light" ? "Бараан" : "Цайвар"} горимд шилжих`}
             >
               {theme === "light" ? <Moon size={19} /> : <Sun size={19} />}
             </button>
             <button
               className={`icon-button ${activityOpen ? "button-active" : ""}`}
               onClick={() => setActivityOpen((current) => !current)}
-              aria-label="Toggle activity panel"
+              aria-label="Үйлдлийн түүх нээх"
             >
               <Activity size={19} />
             </button>
-            <button className="icon-button notification-button" aria-label="Notifications">
-              <Bell size={19} />
-              <span />
-            </button>
+            <NotificationCenter
+              currentUser={currentUser}
+              mode={mode}
+              workspaceId={activeWorkspaceId}
+              onOpenTask={(taskId) => {
+                const task = tasks.find((item) => item.id === taskId);
+                if (task) setEditingTask(task);
+              }}
+            />
             <RoleSwitcher
               currentUser={currentUser}
               onManageTeam={() => setTeamModalOpen(true)}
@@ -1105,7 +1391,7 @@ export function TaskManager() {
             <div className="eyebrow">
               <span>Workspace</span>
               <ChevronRight size={13} />
-              <span>Projects</span>
+              <span>Төслүүд</span>
             </div>
             <div className="title-row">
               <div>
@@ -1115,17 +1401,17 @@ export function TaskManager() {
                     color={activeProjectRecord?.color}
                   />
                   <h1>{projectName}</h1>
-                  <button className="title-menu" aria-label="Project menu">
+                  <button className="title-menu" aria-label="Төслийн цэс">
                     <MoreHorizontal size={20} />
                   </button>
                 </div>
                 <p>
                   {activeProjectRecord?.description ||
-                    "Plan, track, and ship meaningful work together."}
+                    "Төлөвлөж, хянаж, үнэ цэнтэй ажлыг хамтдаа гүйцэтгээрэй."}
                 </p>
               </div>
               <div className="title-actions">
-                <div className="member-stack" aria-label="Project members">
+                <div className="member-stack" aria-label="Төслийн гишүүд">
                   {users
                     .filter(
                       (user) =>
@@ -1138,7 +1424,7 @@ export function TaskManager() {
                     .map((person) => (
                     <Avatar person={person} small key={person.name} />
                     ))}
-                  <button className="add-member" aria-label="Add member">
+                  <button className="add-member" aria-label="Гишүүн нэмэх">
                     <Plus size={15} />
                   </button>
                 </div>
@@ -1150,41 +1436,44 @@ export function TaskManager() {
                   disabled={!activeProjectRecord}
                 >
                   <Settings size={16} />
-                  <span>Customize</span>
+                  <span>Тохируулах</span>
                 </button>
                 <button
                   className="primary-button"
                   onClick={openNewTask}
-                  disabled={!hasPermission(currentUser, "createTask")}
+                  disabled={
+                    !hasPermission(currentUser, "createTask") ||
+                    !projects.some((project) => !project.archived)
+                  }
                 >
                   <Plus size={18} />
-                  New task
+                  Шинэ таск
                 </button>
               </div>
             </div>
           </section>
 
-          <section className="metrics-grid" aria-label="Project summary">
+          <section className="metrics-grid" aria-label="Төслийн тойм">
             <MetricCard
               icon={<CheckCircle2 size={18} />}
-              label="Completion"
+              label="Гүйцэтгэл"
               value={`${completion}%`}
-              detail={`${doneCount} of ${summaryTasks.length} tasks`}
+              detail={`${summaryTasks.length} таскаас ${doneCount} дууссан`}
               tone="violet"
               progress={completion}
             />
             <MetricCard
               icon={<Target size={18} />}
-              label="In progress"
+              label="Хийгдэж буй"
               value={String(activeCount)}
-              detail="Tasks moving forward"
+              detail="Урагшилж буй таскууд"
               tone="blue"
             />
             <MetricCard
               icon={<Clock3 size={18} />}
-              label="Overdue"
+              label="Хугацаа хэтэрсэн"
               value={String(overdueCount)}
-              detail={overdueCount ? "Needs your attention" : "Everything is on track"}
+              detail={overdueCount ? "Анхаарал шаардлагатай" : "Бүх ажил төлөвлөгөөний дагуу"}
               tone="orange"
             />
           </section>
@@ -1196,21 +1485,35 @@ export function TaskManager() {
                 onClick={() => setView("list")}
               >
                 <LayoutList size={17} />
-                List
+                Жагсаалт
               </button>
               <button
                 className={view === "board" ? "active" : ""}
                 onClick={() => setView("board")}
               >
                 <Columns3 size={17} />
-                Board
+                Самбар
               </button>
               <button
                 className={view === "calendar" ? "active" : ""}
                 onClick={() => setView("calendar")}
               >
                 <CalendarDays size={17} />
-                Calendar
+                Календарь
+              </button>
+              <button
+                className={view === "timeline" ? "active" : ""}
+                onClick={() => setView("timeline")}
+              >
+                <GanttChart size={17} />
+                Timeline
+              </button>
+              <button
+                className={view === "dashboard" ? "active" : ""}
+                onClick={() => setView("dashboard")}
+              >
+                <BarChart3 size={17} />
+                Дашбоард
               </button>
             </div>
 
@@ -1220,11 +1523,11 @@ export function TaskManager() {
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search this project"
-                  aria-label="Search this project"
+                  placeholder="Энэ төслөөс хайх"
+                  aria-label="Энэ төслөөс хайх"
                 />
                 {query && (
-                  <button onClick={() => setQuery("")} aria-label="Clear search">
+                  <button onClick={() => setQuery("")} aria-label="Хайлт арилгах">
                     <X size={14} />
                   </button>
                 )}
@@ -1236,11 +1539,13 @@ export function TaskManager() {
                   onChange={(event) =>
                     setStatusFilter(event.target.value as TaskStatus | "All")
                   }
-                  aria-label="Filter by status"
+                  aria-label="Төлвөөр шүүх"
                 >
-                  <option value="All">All statuses</option>
+                  <option value="All">Бүх төлөв</option>
                   {STATUSES.map((status) => (
-                    <option key={status}>{status}</option>
+                    <option value={status} key={status}>
+                      {STATUS_LABELS[status]}
+                    </option>
                   ))}
                 </select>
                 <ChevronDown size={14} />
@@ -1251,22 +1556,96 @@ export function TaskManager() {
                   onChange={(event) =>
                     setPriorityFilter(event.target.value as TaskPriority | "All")
                   }
-                  aria-label="Filter by priority"
+                  aria-label="Ач холбогдлоор шүүх"
                 >
-                  <option value="All">All priorities</option>
+                  <option value="All">Бүх ач холбогдол</option>
                   {PRIORITIES.map((priority) => (
-                    <option key={priority}>{priority}</option>
+                    <option value={priority} key={priority}>
+                      {PRIORITY_LABELS[priority]}
+                    </option>
                   ))}
                 </select>
                 <ChevronDown size={14} />
               </label>
+              <label className="filter-control">
+                <select
+                  value={assigneeFilter}
+                  onChange={(event) => setAssigneeFilter(event.target.value)}
+                  aria-label="Хариуцагчаар шүүх"
+                >
+                  <option value="All">Бүх хариуцагч</option>
+                  {users
+                    .filter((user) => user.active && user.id !== "unassigned")
+                    .map((user) => (
+                      <option value={user.id} key={user.id}>
+                        {user.name}
+                      </option>
+                    ))}
+                </select>
+                <ChevronDown size={14} />
+              </label>
+              <label className="filter-control">
+                <select
+                  value={dueFilter}
+                  onChange={(event) =>
+                    setDueFilter(
+                      event.target.value as "All" | "overdue" | "today" | "week",
+                    )
+                  }
+                  aria-label="Эцсийн хугацаагаар шүүх"
+                >
+                  <option value="All">Бүх хугацаа</option>
+                  <option value="overdue">Хугацаа хэтэрсэн</option>
+                  <option value="today">Өнөөдөр дуусах</option>
+                  <option value="week">Дараагийн 7 хоног</option>
+                </select>
+                <ChevronDown size={14} />
+              </label>
+              <label className="filter-control">
+                <select
+                  value={tagFilter}
+                  onChange={(event) => setTagFilter(event.target.value)}
+                  aria-label="Тагаар шүүх"
+                >
+                  <option value="All">Бүх таг</option>
+                  {availableTags.map((tag) => (
+                    <option value={tag} key={tag}>
+                      {tag}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={14} />
+              </label>
+              {(statusFilter !== "All" ||
+                priorityFilter !== "All" ||
+                assigneeFilter !== "All" ||
+                dueFilter !== "All" ||
+                tagFilter !== "All") && (
+                <button
+                  className="clear-filters"
+                  onClick={() => {
+                    setStatusFilter("All");
+                    setPriorityFilter("All");
+                    setAssigneeFilter("All");
+                    setDueFilter("All");
+                    setTagFilter("All");
+                  }}
+                >
+                  <X size={14} />
+                  Арилгах
+                </button>
+              )}
+              <button className="clear-filters export-button" onClick={exportTasksCsv}>
+                <FileDown size={14} />
+                CSV
+              </button>
               <button
                 className="add-column-button"
                 onClick={() => {
                   if (hasPermission(currentUser, "manageColumns")) {
                     setEditingColumn("new");
                   } else {
-                    setToast("Your role cannot manage columns");
+                    setToast("Таны эрх багана удирдах боломжгүй");
                   }
                 }}
                 disabled={
@@ -1275,10 +1654,10 @@ export function TaskManager() {
                 }
               >
                 <Plus size={15} />
-                <span>Add column</span>
+                <span>Багана нэмэх</span>
               </button>
               <span className="result-count">
-                {visibleTasks.length} {visibleTasks.length === 1 ? "task" : "tasks"}
+                {visibleTasks.length} таск
               </span>
             </div>
 
@@ -1294,7 +1673,7 @@ export function TaskManager() {
                     if (hasPermission(currentUser, "manageColumns")) {
                       setEditingColumn(column);
                     } else {
-                      setToast("Your role cannot configure columns");
+                      setToast("Таны эрх багана тохируулах боломжгүй");
                     }
                   }}
                   onCellUpdate={updateCustomField}
@@ -1323,6 +1702,19 @@ export function TaskManager() {
                   onEdit={setEditingTask}
                 />
               )}
+              {view === "timeline" && (
+                <TimelineView
+                  tasks={visibleTasks.filter((task) => !task.parentId)}
+                  onEdit={setEditingTask}
+                  onAdd={openNewTask}
+                />
+              )}
+              {view === "dashboard" && (
+                <DashboardView
+                  tasks={visibleTasks.filter((task) => !task.parentId)}
+                  users={users}
+                />
+              )}
             </div>
           </section>
         </div>
@@ -1331,13 +1723,13 @@ export function TaskManager() {
       <aside className={`activity-panel ${activityOpen ? "activity-open" : ""}`}>
         <div className="activity-header">
           <div>
-            <span className="panel-kicker">Live updates</span>
-            <h2>Activity</h2>
+            <span className="panel-kicker">Шууд шинэчлэл</span>
+            <h2>Үйлдлийн түүх</h2>
           </div>
           <button
             className="icon-button"
             onClick={() => setActivityOpen(false)}
-            aria-label="Close activity panel"
+            aria-label="Үйлдлийн түүх хаах"
           >
             <X size={18} />
           </button>
@@ -1347,7 +1739,7 @@ export function TaskManager() {
             person={PEOPLE[2]}
             text={
               <>
-                moved <strong>Finalize visual design system</strong> to In review
+                <strong>Finalize visual design system</strong> таскийг хяналтын төлөвт оруулсан
               </>
             }
             time="12 minutes ago"
@@ -1357,7 +1749,7 @@ export function TaskManager() {
             person={PEOPLE[1]}
             text={
               <>
-                completed <strong>QA responsive navigation</strong>
+                <strong>QA responsive navigation</strong> таскийг дуусгасан
               </>
             }
             time="2 hours ago"
@@ -1367,27 +1759,27 @@ export function TaskManager() {
             person={PEOPLE[0]}
             text={
               <>
-                added a note to <strong>Research customer onboarding flow</strong>
+                <strong>Research customer onboarding flow</strong> таскт тэмдэглэл нэмсэн
               </>
             }
-            time="Yesterday"
+            time="Өчигдөр"
             tone="progress"
           />
-          <div className="activity-date">Wednesday, July 22</div>
+          <div className="activity-date">7-р сарын 22, Лхагва</div>
           <ActivityItem
             person={PEOPLE[3]}
             text={
               <>
-                created <strong>Set up product event tracking</strong>
+                <strong>Set up product event tracking</strong> таск үүсгэсэн
               </>
             }
-            time="Yesterday"
+            time="Өчигдөр"
             tone="neutral"
           />
         </div>
         <div className="activity-compose">
           <Avatar person={PEOPLE[0]} small />
-          <button>Write an update...</button>
+          <button>Шинэчлэл бичих...</button>
         </div>
       </aside>
 
@@ -1412,6 +1804,7 @@ export function TaskManager() {
             projects.find((project) => !project.archived)
           }
           projects={projects.filter((project) => !project.archived)}
+          allTasks={tasks}
           defaultAssignee={currentUser}
           users={users}
           onClose={() => {
@@ -1435,6 +1828,9 @@ export function TaskManager() {
           readOnly={editingTask ? !canEditTask(currentUser, editingTask) : false}
           canAssign={hasPermission(currentUser, "assignTasks")}
           columns={projectColumns}
+          currentUser={currentUser}
+          mode={mode}
+          workspaceId={activeWorkspaceId}
         />
       )}
 
@@ -1576,11 +1972,11 @@ function ListView({
       <div className="list-table" style={tableStyle}>
         <div className="task-table-header" style={gridStyle}>
           <span className="col-check" />
-          <span>Task</span>
-          <span>Assignees</span>
-          <span>Status</span>
-          <span>Priority</span>
-          <span>Due date</span>
+          <span>Таск</span>
+          <span>Хариуцагч</span>
+          <span>Төлөв</span>
+          <span>Ач холбогдол</span>
+          <span>Эцсийн хугацаа</span>
           {columns.map((column) => (
             <button
               className="custom-column-header"
@@ -1604,7 +2000,7 @@ function ListView({
                 <span
                   className={`group-accent group-${group.toLowerCase().replace(" ", "-")}`}
                 />
-                <strong>{group}</strong>
+                <strong>{groupLabel(group)}</strong>
                 <span>{groupTasks.length}</span>
               </div>
               {groupTasks.map((task) => {
@@ -1666,7 +2062,7 @@ function ListView({
                 <span>
                   <Plus size={14} />
                 </span>
-                Add task
+                Таск нэмэх
               </button>}
             </div>
           );
@@ -1718,7 +2114,7 @@ function TaskRow({
       <button
         className={`task-check ${task.status === "Done" ? "checked" : ""}`}
         onClick={toggleDone}
-        aria-label={task.status === "Done" ? "Mark incomplete" : "Mark complete"}
+        aria-label={task.status === "Done" ? "Дуусаагүй болгох" : "Дууссан болгох"}
       >
         {task.status === "Done" && <Check size={13} strokeWidth={3} />}
       </button>
@@ -1727,7 +2123,7 @@ function TaskRow({
           <button
             className={`subtask-toggle ${expanded ? "expanded" : ""}`}
             onClick={onToggleSubtasks}
-            aria-label={`${expanded ? "Collapse" : "Expand"} ${subtasks.length} subtasks`}
+            aria-label={`${subtasks.length} дэд таск ${expanded ? "хураах" : "дэлгэх"}`}
           >
             <ChevronRight size={14} />
           </button>
@@ -1744,7 +2140,7 @@ function TaskRow({
           </span>
           <small>
             {subtasks.length
-              ? `${subtasks.filter((subtask) => subtask.status === "Done").length}/${subtasks.length} subtasks · ${task.progress}%`
+              ? `${subtasks.filter((subtask) => subtask.status === "Done").length}/${subtasks.length} дэд таск · ${task.progress}%`
               : task.tags.join(" · ")}
           </small>
         </button>
@@ -1769,7 +2165,9 @@ function TaskRow({
           aria-label={`Status for ${task.title}`}
         >
           {STATUSES.map((status) => (
-            <option key={status}>{status}</option>
+            <option value={status} key={status}>
+              {STATUS_LABELS[status]}
+            </option>
           ))}
         </select>
         <ChevronDown size={12} />
@@ -1784,7 +2182,9 @@ function TaskRow({
           aria-label={`Priority for ${task.title}`}
         >
           {PRIORITIES.map((priority) => (
-            <option key={priority}>{priority}</option>
+            <option value={priority} key={priority}>
+              {PRIORITY_LABELS[priority]}
+            </option>
           ))}
         </select>
       </label>
@@ -1867,8 +2267,8 @@ function AssigneeCell({
       {open && canAssign && (
         <div className="assignee-menu">
           <div className="assignee-menu-heading">
-            <strong>Assign people</strong>
-            <button onClick={() => setOpen(false)}>Done</button>
+            <strong>Хариуцагч сонгох</strong>
+            <button onClick={() => setOpen(false)}>Болсон</button>
           </div>
           {activeUsers.map((user) => {
             const selected = assigned.some(
@@ -1920,7 +2320,7 @@ function CustomCell({
     return (
       <InlineCellInput
         value={typeof value === "string" ? value : ""}
-        placeholder="Add text"
+        placeholder="Текст нэмэх"
         onCommit={onChange}
       />
     );
@@ -1997,7 +2397,7 @@ function CustomCell({
           onChange={(event) => onChange(event.target.value || null)}
           aria-label={column.name}
         >
-          <option value="">Unassigned</option>
+          <option value="">Хуваарилаагүй</option>
           {users
             .filter((person) => person.active && person.id !== "unassigned")
             .map((person) => (
@@ -2014,7 +2414,7 @@ function CustomCell({
     return (
       <InlineCellInput
         value={Array.isArray(value) ? value.join(", ") : ""}
-        placeholder="Add tags"
+        placeholder="Таг нэмэх"
         onCommit={(nextValue) =>
           onChange(
             nextValue
@@ -2041,7 +2441,7 @@ function CustomCell({
         onChange={(event) => onChange(event.target.value || null)}
         aria-label={column.name}
       >
-        <option value="">Select...</option>
+        <option value="">Сонгох...</option>
         {options.map((option) => (
           <option value={option} key={option}>
             {option}
@@ -2122,7 +2522,7 @@ function BoardView({
           >
             <div className="board-column-header">
               <span className={statusClass[status]} />
-              <strong>{status}</strong>
+              <strong>{STATUS_LABELS[status]}</strong>
               <small>{columnTasks.length}</small>
               <button onClick={onAdd} aria-label={`Add task to ${status}`}>
                 <Plus size={16} />
@@ -2140,7 +2540,7 @@ function BoardView({
                 >
                   <div className="board-card-top">
                     <span className={`priority-pill ${priorityClass[task.priority]}`}>
-                      {task.priority}
+                      {PRIORITY_LABELS[task.priority]}
                     </span>
                     <MoreHorizontal size={17} />
                   </div>
@@ -2167,7 +2567,7 @@ function BoardView({
               ))}
               {!columnTasks.length && (
                 <div className="empty-column">
-                  <span>Drop a task here</span>
+                  <span>Таскийг энд чирж оруулна уу</span>
                 </div>
               )}
               <button className="board-add-card" onClick={onAdd}>
@@ -2215,11 +2615,17 @@ function CalendarView({
     return { date: new Date(year, monthIndex, dayOffset), muted: false };
   });
 
-  const monthLabel = new Intl.DateTimeFormat("en", {
+  const monthLabel = new Intl.DateTimeFormat("mn-MN", {
     month: "long",
     year: "numeric",
+    timeZone: "Asia/Ulaanbaatar",
   }).format(month);
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ulaanbaatar",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 
   return (
     <div className="calendar-view">
@@ -2228,14 +2634,14 @@ function CalendarView({
           <button
             className="icon-button"
             onClick={() => onMonthChange(new Date(year, monthIndex - 1, 1))}
-            aria-label="Previous month"
+            aria-label="Өмнөх сар"
           >
             <ChevronLeft size={18} />
           </button>
           <button
             className="icon-button"
             onClick={() => onMonthChange(new Date(year, monthIndex + 1, 1))}
-            aria-label="Next month"
+            aria-label="Дараагийн сар"
           >
             <ChevronRight size={18} />
           </button>
@@ -2245,11 +2651,11 @@ function CalendarView({
           className="secondary-button calendar-today"
           onClick={() => onMonthChange(new Date())}
         >
-          Today
+          Өнөөдөр
         </button>
       </div>
       <div className="calendar-grid">
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+        {["Ня", "Да", "Мя", "Лх", "Пү", "Ба", "Бя"].map((day) => (
           <div className="calendar-weekday" key={day}>
             {day}
           </div>
@@ -2281,12 +2687,203 @@ function CalendarView({
                     {task.title}
                   </button>
                 ))}
-                {dayTasks.length > 3 && <small>+{dayTasks.length - 3} more</small>}
+                {dayTasks.length > 3 && <small>+{dayTasks.length - 3} бусад</small>}
               </div>
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function TimelineView({
+  tasks,
+  onEdit,
+  onAdd,
+}: {
+  tasks: Task[];
+  onEdit: (task: Task) => void;
+  onAdd: () => void;
+}) {
+  if (!tasks.length) return <EmptyState onAdd={onAdd} />;
+  const starts = tasks.map((task) =>
+    new Date(task.createdAt).setHours(0, 0, 0, 0),
+  );
+  const ends = tasks.map((task) =>
+    new Date(`${task.dueDate}T23:59:59+08:00`).getTime(),
+  );
+  const rangeStart = Math.min(...starts);
+  const rangeEnd = Math.max(...ends, rangeStart + 86_400_000);
+  const range = Math.max(rangeEnd - rangeStart, 86_400_000);
+  const markers = Array.from({ length: 5 }, (_, index) => {
+    const value = new Date(rangeStart + (range * index) / 4);
+    return {
+      position: `${(index / 4) * 100}%`,
+      label: new Intl.DateTimeFormat("mn-MN", {
+        month: "short",
+        day: "numeric",
+        timeZone: "Asia/Ulaanbaatar",
+      }).format(value),
+    };
+  });
+
+  return (
+    <div className="timeline-view">
+      <div className="timeline-scale">
+        <span />
+        <div>
+          {markers.map((marker) => (
+            <span style={{ left: marker.position }} key={marker.position}>
+              {marker.label}
+            </span>
+          ))}
+        </div>
+      </div>
+      {tasks.map((task) => {
+        const start = new Date(task.createdAt).setHours(0, 0, 0, 0);
+        const end = new Date(`${task.dueDate}T23:59:59+08:00`).getTime();
+        const left = Math.max(0, ((start - rangeStart) / range) * 100);
+        const width = Math.max(2.5, ((Math.max(end, start) - start) / range) * 100);
+        return (
+          <button
+            className="timeline-row"
+            onClick={() => onEdit(task)}
+            key={task.id}
+          >
+            <span>
+              <strong>{task.title}</strong>
+              <small>{STATUS_LABELS[task.status]} · {task.dueDate}</small>
+            </span>
+            <span className="timeline-track">
+              {markers.map((marker) => (
+                <i style={{ left: marker.position }} key={marker.position} />
+              ))}
+              <b
+                className={statusClass[task.status]}
+                style={{
+                  left: `${left}%`,
+                  width: `${Math.min(width, 100 - left)}%`,
+                }}
+              >
+                <em style={{ width: `${task.progress}%` }} />
+              </b>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function DashboardView({
+  tasks,
+  users,
+}: {
+  tasks: Task[];
+  users: WorkspaceUser[];
+}) {
+  const total = tasks.length || 1;
+  const statusCounts = STATUSES.map((status) => ({
+    status,
+    count: tasks.filter((task) => task.status === status).length,
+  }));
+  const priorityCounts = PRIORITIES.map((priority) => ({
+    priority,
+    count: tasks.filter((task) => task.priority === priority).length,
+  }));
+  const workload = users
+    .filter((user) => user.active && user.id !== "unassigned")
+    .map((user) => ({
+      user,
+      count: tasks.filter((task) =>
+        taskAssignees(task).some((assignee) => assignee.id === user.id),
+      ).length,
+    }))
+    .sort((a, b) => b.count - a.count);
+  const maxWorkload = Math.max(...workload.map((item) => item.count), 1);
+
+  return (
+    <div className="dashboard-view">
+      <section className="dashboard-card">
+        <header>
+          <span>
+            <BarChart3 size={16} />
+            Төлвийн хуваарилалт
+          </span>
+          <small>{tasks.length} таск</small>
+        </header>
+        <div className="chart-list">
+          {statusCounts.map(({ status, count }) => (
+            <div key={status}>
+              <span>{STATUS_LABELS[status]}</span>
+              <b>
+                <i
+                  className={statusClass[status]}
+                  style={{ width: `${(count / total) * 100}%` }}
+                />
+              </b>
+              <strong>{count}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="dashboard-card">
+        <header>
+          <span>
+            <Target size={16} />
+            Ач холбогдол
+          </span>
+        </header>
+        <div className="priority-donut-wrap">
+          <div
+            className="priority-donut"
+            style={{
+              background: `conic-gradient(
+                #8b73ff 0 ${(priorityCounts[3].count / total) * 100}%,
+                #ed5a70 ${(priorityCounts[3].count / total) * 100}% ${((priorityCounts[3].count + priorityCounts[2].count) / total) * 100}%,
+                #ffb547 ${((priorityCounts[3].count + priorityCounts[2].count) / total) * 100}% ${((priorityCounts[3].count + priorityCounts[2].count + priorityCounts[1].count) / total) * 100}%,
+                #21c8a8 ${((priorityCounts[3].count + priorityCounts[2].count + priorityCounts[1].count) / total) * 100}% 100%
+              )`,
+            }}
+          >
+            <span>
+              <strong>{tasks.length}</strong>
+              <small>нийт</small>
+            </span>
+          </div>
+          <div className="donut-legend">
+            {priorityCounts.map(({ priority, count }) => (
+              <span className={priorityClass[priority]} key={priority}>
+                <i /> {PRIORITY_LABELS[priority]} <strong>{count}</strong>
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+      <section className="dashboard-card workload-card">
+        <header>
+          <span>
+            <Users size={16} />
+            Ажлын ачаалал
+          </span>
+          <small>Хариуцагчаар</small>
+        </header>
+        <div className="workload-list">
+          {workload.map(({ user, count }) => (
+            <div key={user.id}>
+              <Avatar person={user} small />
+              <span>
+                <strong>{user.name}</strong>
+                <b>
+                  <i style={{ width: `${(count / maxWorkload) * 100}%` }} />
+                </b>
+              </span>
+              <em>{count}</em>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
@@ -2297,11 +2894,11 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
       <div>
         <FolderKanban size={28} />
       </div>
-      <h3>No tasks found</h3>
-      <p>Try changing the filters or add a new task to this project.</p>
+      <h3>Таск олдсонгүй</h3>
+      <p>Шүүлтүүрээ өөрчлөх эсвэл энэ төсөлд шинэ таск нэмнэ үү.</p>
       <button className="primary-button" onClick={onAdd}>
         <Plus size={17} />
-        New task
+        Шинэ таск
       </button>
     </div>
   );
@@ -2360,15 +2957,15 @@ function ColumnModal({
 
   const usesOptions = type === "dropdown" || type === "status";
   const typeLabels: Record<CustomColumnType, string> = {
-    text: "Text",
-    number: "Number",
-    date: "Date",
-    status: "Status",
-    person: "Person",
-    dropdown: "Dropdown",
-    checkbox: "Checkbox",
-    progress: "Progress",
-    tags: "Tags",
+    text: "Текст",
+    number: "Тоо",
+    date: "Огноо",
+    status: "Төлөв",
+    person: "Хүн",
+    dropdown: "Сонголт",
+    checkbox: "Чекбокс",
+    progress: "Гүйцэтгэл",
+    tags: "Таг",
   };
 
   return (
@@ -2397,9 +2994,9 @@ function ColumnModal({
         <div className="modal-header">
           <div>
             <span className="panel-kicker">
-              {column ? "Configure column" : "Custom field"}
+              {column ? "Багана тохируулах" : "Нэмэлт талбар"}
             </span>
-            <h2>{column ? "Edit column" : "Add a column"}</h2>
+            <h2>{column ? "Багана засах" : "Багана нэмэх"}</h2>
           </div>
           <button type="button" className="icon-button" onClick={onClose}>
             <X size={19} />
@@ -2407,17 +3004,17 @@ function ColumnModal({
         </div>
         <div className="column-modal-content">
           <label className="form-field">
-            <span>Column name</span>
+            <span>Баганын нэр</span>
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="e.g. Effort, Client, Sprint"
+              placeholder="Жишээ: Хүчин чармайлт, Харилцагч, Sprint"
               autoFocus
               required
             />
           </label>
           <div className="form-field">
-            <span>Column type</span>
+            <span>Баганын төрөл</span>
             <div className="column-types-grid">
               {CUSTOM_COLUMN_TYPES.map((columnType) => (
                 <button
@@ -2443,21 +3040,20 @@ function ColumnModal({
           </div>
           {usesOptions && (
             <label className="form-field">
-              <span>Options</span>
+              <span>Сонголтууд</span>
               <input
                 value={options}
                 onChange={(event) => setOptions(event.target.value)}
-                placeholder="Option one, Option two, Option three"
+                placeholder="Сонголт нэг, Сонголт хоёр, Сонголт гурав"
               />
               <small className="field-hint">
-                Separate choices with commas. You can edit these later.
+                Сонголтуудыг таслалаар тусгаарлана. Дараа нь засах боломжтой.
               </small>
             </label>
           )}
           {column && column.type !== type && (
             <div className="column-warning">
-              Existing cell values stay saved, but may display differently with the new
-              type.
+              Одоогийн утгууд хадгалагдах боловч шинэ төрлөөр өөр харагдаж болно.
             </div>
           )}
         </div>
@@ -2469,7 +3065,7 @@ function ColumnModal({
               onClick={() => {
                 if (
                   window.confirm(
-                    `Remove the “${column.name}” column? Existing values will be hidden.`,
+                    `“${column.name}” баганыг устгах уу? Одоогийн утгууд харагдахгүй болно.`,
                   )
                 ) {
                   onDelete(column);
@@ -2477,17 +3073,17 @@ function ColumnModal({
               }}
             >
               <Trash2 size={16} />
-              Remove column
+              Багана устгах
             </button>
           ) : (
             <span />
           )}
           <div>
             <button type="button" className="secondary-button" onClick={onClose}>
-              Cancel
+              Цуцлах
             </button>
             <button type="submit" className="primary-button">
-              {column ? "Save column" : "Add column"}
+              {column ? "Багана хадгалах" : "Багана нэмэх"}
             </button>
           </div>
         </div>
@@ -2515,7 +3111,7 @@ function ModalCustomField({
         onClick={() => onChange(value !== true)}
       >
         <span>{value === true && <Check size={13} strokeWidth={3} />}</span>
-        {value === true ? "Checked" : "Not checked"}
+        {value === true ? "Сонгосон" : "Сонгоогүй"}
       </button>
     );
   }
@@ -2543,7 +3139,7 @@ function ModalCustomField({
         value={typeof value === "string" ? value : ""}
         onChange={(event) => onChange(event.target.value || null)}
       >
-        <option value="">Unassigned</option>
+        <option value="">Хуваарилаагүй</option>
         {users
           .filter((person) => person.active && person.id !== "unassigned")
           .map((person) => (
@@ -2565,7 +3161,7 @@ function ModalCustomField({
         value={typeof value === "string" ? value : ""}
         onChange={(event) => onChange(event.target.value || null)}
       >
-        <option value="">Select...</option>
+        <option value="">Сонгох...</option>
         {options.map((option) => (
           <option value={option} key={option}>
             {option}
@@ -2587,7 +3183,7 @@ function ModalCustomField({
               .filter(Boolean),
           )
         }
-        placeholder="Tag one, Tag two"
+        placeholder="Таг нэг, Таг хоёр"
       />
     );
   }
@@ -2613,7 +3209,7 @@ function ModalCustomField({
             : event.target.value,
         )
       }
-      placeholder="Add value"
+      placeholder="Утга нэмэх"
     />
   );
 }
@@ -2624,6 +3220,7 @@ function TaskModal({
   subtasks,
   defaultProject,
   projects,
+  allTasks,
   defaultAssignee,
   users,
   columns,
@@ -2635,12 +3232,16 @@ function TaskModal({
   onArchive,
   readOnly,
   canAssign,
+  currentUser,
+  mode,
+  workspaceId,
 }: {
   task: Task | null;
   parentTask: Task | null;
   subtasks: Task[];
   defaultProject: Project | undefined;
   projects: Project[];
+  allTasks: Task[];
   defaultAssignee: WorkspaceUser;
   users: WorkspaceUser[];
   columns: CustomColumn[];
@@ -2652,6 +3253,9 @@ function TaskModal({
   onArchive?: (task: Task) => void;
   readOnly: boolean;
   canAssign: boolean;
+  currentUser: WorkspaceUser;
+  mode: PersistenceMode;
+  workspaceId: string;
 }) {
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
@@ -2676,6 +3280,12 @@ function TaskModal({
     task?.dueDate ??
       parentTask?.dueDate ??
       new Date().toISOString().slice(0, 10),
+  );
+  const [recurrence, setRecurrence] = useState<TaskRecurrence>(
+    task?.recurrence ?? "none",
+  );
+  const [dependencyIds, setDependencyIds] = useState<string[]>(
+    task?.dependencyIds ?? [],
   );
   const [tags, setTags] = useState(task?.tags.join(", ") ?? "");
   const [progress, setProgress] = useState(task?.progress ?? 0);
@@ -2713,6 +3323,8 @@ function TaskModal({
         assignee,
         assignees: assignees.length ? assignees : [assignee],
         parentId: task?.parentId ?? parentTask?.id ?? null,
+        dependencyIds,
+        recurrence,
         dueDate,
         tags: tags
           .split(",")
@@ -2735,16 +3347,16 @@ function TaskModal({
         <div className="modal-header">
           <div>
             <span className="panel-kicker">
-              {task ? "Task details" : parentTask ? "Create subtask" : "Create task"}
+              {task ? "Таскийн мэдээлэл" : parentTask ? "Дэд таск үүсгэх" : "Таск үүсгэх"}
             </span>
             <h2>
               {task
                 ? readOnly
-                  ? "View task"
-                  : "Edit task"
+                  ? "Таск харах"
+                  : "Таск засах"
                 : parentTask
-                  ? `Break down “${parentTask.title}”`
-                  : "Add something new"}
+                  ? `“${parentTask.title}” таскийг задлах`
+                  : "Шинэ ажил нэмэх"}
             </h2>
           </div>
           <button type="button" className="icon-button" onClick={onClose}>
@@ -2756,36 +3368,39 @@ function TaskModal({
             <div className="parent-task-banner full-field">
               <ListTree size={17} />
               <span>
-                <small>Subtask of</small>
+                <small>Үндсэн таск</small>
                 <strong>{parentTask.title}</strong>
               </span>
             </div>
           )}
           <label className="form-field full-field">
-            <span>Task name</span>
+            <span>Таскийн нэр</span>
             <input
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="What needs to be done?"
+              placeholder="Юу хийх шаардлагатай вэ?"
               autoFocus
               required
             />
           </label>
           <label className="form-field full-field">
-            <span>Description</span>
+            <span>Тайлбар</span>
             <textarea
               value={description}
               onChange={(event) => setDescription(event.target.value)}
-              placeholder="Add context, a brief, or a helpful note..."
+              placeholder="Нөхцөл, товч мэдээлэл эсвэл тэмдэглэл нэмэх..."
               rows={3}
             />
           </label>
           <label className="form-field">
-            <span>Project</span>
+            <span>Төсөл</span>
             <select
               value={projectId}
               disabled={Boolean(parentTask)}
-              onChange={(event) => setProjectId(event.target.value)}
+              onChange={(event) => {
+                setProjectId(event.target.value);
+                setDependencyIds([]);
+              }}
             >
               {projects.map((project) => (
                 <option value={project.id} key={project.id}>
@@ -2795,15 +3410,24 @@ function TaskModal({
             </select>
           </label>
           <label className="form-field">
-            <span>Group</span>
-            <select value={group} onChange={(event) => setGroup(event.target.value)}>
+            <span>Бүлэг</span>
+            <input
+              list="task-group-options"
+              value={group}
+              onChange={(event) => setGroup(event.target.value)}
+              placeholder="Жишээ: Энэ долоо хоног"
+              required
+            />
+            <datalist id="task-group-options">
               {["This week", "Upcoming", "Completed"].map((name) => (
-                <option key={name}>{name}</option>
+                <option value={name} key={name}>
+                  {groupLabel(name)}
+                </option>
               ))}
-            </select>
+            </datalist>
           </label>
           <label className="form-field">
-            <span>Status</span>
+            <span>Төлөв</span>
             <select
               value={status}
               onChange={(event) => {
@@ -2813,23 +3437,27 @@ function TaskModal({
               }}
             >
               {STATUSES.map((name) => (
-                <option key={name}>{name}</option>
+                <option value={name} key={name}>
+                  {STATUS_LABELS[name]}
+                </option>
               ))}
             </select>
           </label>
           <label className="form-field">
-            <span>Priority</span>
+            <span>Ач холбогдол</span>
             <select
               value={priority}
               onChange={(event) => setPriority(event.target.value as TaskPriority)}
             >
               {PRIORITIES.map((name) => (
-                <option key={name}>{name}</option>
+                <option value={name} key={name}>
+                  {PRIORITY_LABELS[name]}
+                </option>
               ))}
             </select>
           </label>
           <div className="form-field full-field">
-            <span>Assignees</span>
+            <span>Хариуцагчид</span>
             <div className="modal-assignee-grid">
               {users
                 .filter((person) => person.active && person.id !== "unassigned")
@@ -2864,12 +3492,12 @@ function TaskModal({
             </div>
             {!canAssign && (
               <small className="field-hint">
-                Your role cannot change task assignees.
+                Таны эрх таскийн хариуцагчийг өөрчлөх боломжгүй.
               </small>
             )}
           </div>
           <label className="form-field">
-            <span>Due date</span>
+            <span>Эцсийн хугацаа</span>
             <input
               type="date"
               value={dueDate}
@@ -2877,12 +3505,80 @@ function TaskModal({
               required
             />
           </label>
+          <label className="form-field">
+            <span>Давтамж</span>
+            <select
+              value={recurrence}
+              onChange={(event) =>
+                setRecurrence(event.target.value as TaskRecurrence)
+              }
+            >
+              <option value="none">Давтахгүй</option>
+              <option value="daily">Өдөр бүр</option>
+              <option value="weekly">Долоо хоног бүр</option>
+              <option value="monthly">Сар бүр</option>
+            </select>
+          </label>
+          {!parentTask && (
+            <div className="form-field full-field">
+              <span>Хамаарал · эхлүүлэхийн өмнө дууссан байх таск</span>
+              <div className="dependency-grid">
+                {allTasks
+                  .filter(
+                    (candidate) =>
+                      !candidate.parentId &&
+                      !candidate.archived &&
+                      candidate.projectId === projectId &&
+                      candidate.id !== task?.id,
+                  )
+                  .map((candidate) => {
+                    const selected = dependencyIds.includes(candidate.id);
+                    return (
+                      <button
+                        type="button"
+                        className={selected ? "selected" : ""}
+                        onClick={() =>
+                          setDependencyIds((current) =>
+                            selected
+                              ? current.filter((id) => id !== candidate.id)
+                              : [...current, candidate.id],
+                          )
+                        }
+                        key={candidate.id}
+                      >
+                        <span
+                          className={`status-dot ${statusClass[candidate.status]}`}
+                        />
+                        <span>
+                          <strong>{candidate.title}</strong>
+                          <small>
+                            {STATUS_LABELS[candidate.status]} · {candidate.dueDate}
+                          </small>
+                        </span>
+                        <i>{selected && <Check size={12} />}</i>
+                      </button>
+                    );
+                  })}
+                {!allTasks.some(
+                  (candidate) =>
+                    !candidate.parentId &&
+                    !candidate.archived &&
+                    candidate.projectId === projectId &&
+                    candidate.id !== task?.id,
+                ) && (
+                  <small className="field-hint">
+                    Хамаарал сонгох өөр таск одоогоор алга.
+                  </small>
+                )}
+              </div>
+            </div>
+          )}
           <label className="form-field full-field">
-            <span>Tags</span>
+            <span>Таг</span>
             <input
               value={tags}
               onChange={(event) => setTags(event.target.value)}
-              placeholder="Design, Research, Frontend"
+              placeholder="Дизайн, Судалгаа, Frontend"
             />
           </label>
           {task && !task.parentId && (
@@ -2890,11 +3586,11 @@ function TaskModal({
               <div className="subtask-editor-heading">
                 <span>
                   <ListTree size={15} />
-                  Subtasks
+                  Дэд таск
                 </span>
                 <small>
                   {subtasks.filter((subtask) => subtask.status === "Done").length}/
-                  {subtasks.length} complete
+                  {subtasks.length} дууссан
                 </small>
               </div>
               <div className="subtask-editor-list">
@@ -2923,7 +3619,7 @@ function TaskModal({
                       >
                         {subtask.title}
                       </strong>
-                      <small>{subtask.status}</small>
+                      <small>{STATUS_LABELS[subtask.status]}</small>
                     </span>
                     <span className="assignee-stack">
                       {taskAssignees(subtask).slice(0, 2).map((person) => (
@@ -2934,7 +3630,7 @@ function TaskModal({
                 ))}
                 {!subtasks.length && (
                   <p className="subtask-empty">
-                    Break this task into small, assignable next steps.
+                    Энэ таскийг жижиг, хуваарилах боломжтой алхмуудад задлаарай.
                   </p>
                 )}
               </div>
@@ -2951,7 +3647,7 @@ function TaskModal({
                         setSubtaskTitle("");
                       }
                     }}
-                    placeholder="Add a subtask and press Enter"
+                    placeholder="Дэд таск бичээд Enter дарна уу"
                   />
                   <button
                     type="button"
@@ -2961,7 +3657,7 @@ function TaskModal({
                       setSubtaskTitle("");
                     }}
                   >
-                    Add
+                    Нэмэх
                   </button>
                 </div>
               )}
@@ -2970,8 +3666,8 @@ function TaskModal({
           {columns.length > 0 && (
             <div className="custom-fields-editor full-field">
               <div className="custom-fields-title">
-                <span>Custom fields</span>
-                <small>{columns.length} columns</small>
+                <span>Нэмэлт талбар</span>
+                <small>{columns.length} багана</small>
               </div>
               <div className="custom-fields-grid">
                 {columns.map((column) => (
@@ -2998,7 +3694,7 @@ function TaskModal({
           )}
           <label className="form-field full-field range-field">
             <span>
-              Progress <strong>{progress}%</strong>
+              Гүйцэтгэл <strong>{progress}%</strong>
             </span>
             <input
               type="range"
@@ -3010,6 +3706,15 @@ function TaskModal({
             />
           </label>
         </fieldset>
+        {task && (
+          <TaskCollaboration
+            taskId={task.id}
+            currentUser={currentUser}
+            users={users}
+            mode={mode}
+            workspaceId={workspaceId}
+          />
+        )}
         <div className="modal-footer">
           <div className="modal-danger-actions">
             {task && onArchive && (
@@ -3019,7 +3724,7 @@ function TaskModal({
                 onClick={() => onArchive(task)}
               >
                 {task.archived ? <RotateCcw size={16} /> : <Archive size={16} />}
-                {task.archived ? "Restore" : "Archive"}
+                {task.archived ? "Сэргээх" : "Архивлах"}
               </button>
             )}
             {task && onDelete && (
@@ -3027,23 +3732,23 @@ function TaskModal({
                 type="button"
                 className="delete-button"
                 onClick={() => {
-                  if (window.confirm(`Permanently delete “${task.title}”?`)) {
+                  if (window.confirm(`“${task.title}” таскийг бүрмөсөн устгах уу?`)) {
                     onDelete(task);
                   }
                 }}
               >
                 <Trash2 size={16} />
-                Delete
+                Устгах
               </button>
             )}
           </div>
           <div>
             <button type="button" className="secondary-button" onClick={onClose}>
-              {readOnly ? "Close" : "Cancel"}
+              {readOnly ? "Хаах" : "Цуцлах"}
             </button>
             {!readOnly && (
               <button type="submit" className="primary-button">
-                {task ? "Save changes" : "Create task"}
+                {task ? "Өөрчлөлт хадгалах" : "Таск үүсгэх"}
               </button>
             )}
           </div>

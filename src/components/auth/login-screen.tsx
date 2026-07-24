@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
-  Layers3,
   LoaderCircle,
   LockKeyhole,
   Moon,
@@ -80,14 +79,14 @@ export function LoginScreen({
         error?: string;
       };
       if (!response.ok || !result.user) {
-        throw new Error(result.error ?? "Unable to authenticate.");
+        throw new Error(result.error ?? "Нэвтрэх хүсэлтийг боловсруулах боломжгүй.");
       }
       onAuthenticated(result.user);
     } catch (requestError) {
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Unable to authenticate.",
+          : "Нэвтрэх хүсэлтийг боловсруулах боломжгүй.",
       );
       setSubmitting(false);
     }
@@ -105,15 +104,15 @@ export function LoginScreen({
   const submitSignup = (event: React.FormEvent) => {
     event.preventDefault();
     if (password.length < 8) {
-      setError("Create a password with at least 8 characters.");
+      setError("Нууц үг хамгийн багадаа 8 тэмдэгттэй байна.");
       return;
     }
     if (password !== confirmPassword) {
-      setError("The passwords do not match.");
+      setError("Нууц үгнүүд хоорондоо тохирохгүй байна.");
       return;
     }
     if (!acceptedTerms) {
-      setError("Accept the workspace terms to create your account.");
+      setError("Бүртгэл үүсгэхийн тулд үйлчилгээний нөхцөлийг зөвшөөрнө үү.");
       return;
     }
     void authenticate("/api/auth/signup", {
@@ -141,27 +140,27 @@ export function LoginScreen({
     <main className="login-page">
       <section className="login-story">
         <div className="login-brand">
-          <span>
-            <Layers3 size={22} strokeWidth={2.4} />
+          <span aria-hidden="true">
+            <img src="/pro-team-logo.png" alt="" />
           </span>
-          <strong>nimbus</strong>
+          <strong>Pro Team</strong>
         </div>
         <div className="login-story-copy">
-          <span className="login-kicker">One place for your team&apos;s work</span>
-          <h1>Move work forward, together.</h1>
+          <span className="login-kicker">Танай багийн ажлын нэгдсэн орон зай</span>
+          <h1>Ажлаа хамтдаа урагшлуул.</h1>
           <p>
-            Plan projects, assign clear ownership, and turn big outcomes into
-            manageable subtasks.
+            Төслөө төлөвлөж, хариуцагчаа тодорхой болгож, том зорилгыг
+            хэрэгжихүйц дэд ажлуудад хуваарилаарай.
           </p>
           <div className="login-benefits">
             <span>
-              <CheckCircle2 size={18} /> Clear owners and shared responsibility
+              <CheckCircle2 size={18} /> Тодорхой эзэн, хамтын хариуцлага
             </span>
             <span>
-              <CheckCircle2 size={18} /> Tasks, subtasks, boards, and calendars
+              <CheckCircle2 size={18} /> Таск, дэд таск, самбар, календарь
             </span>
             <span>
-              <CheckCircle2 size={18} /> Secure, role-aware workspace access
+              <CheckCircle2 size={18} /> Рольд суурилсан аюулгүй хандалт
             </span>
           </div>
         </div>
@@ -175,7 +174,7 @@ export function LoginScreen({
           </div>
           <span>
             <strong>Acme Studio</strong>
-            <small>Join the team and start collaborating</small>
+            <small>Багтаа нэгдэж, хамтран ажиллаж эхлээрэй</small>
           </span>
         </div>
       </section>
@@ -186,42 +185,42 @@ export function LoginScreen({
           variant="outline"
           size="icon"
           onClick={onToggleTheme}
-          aria-label={`Use ${theme === "light" ? "dark" : "light"} theme`}
+          aria-label={`${theme === "light" ? "Бараан" : "Цайвар"} горим ашиглах`}
         >
           {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
         </Button>
 
         <Card className="login-card">
           <CardHeader className="login-card-header">
-            <span className="login-mobile-mark">
-              <Layers3 size={19} />
+            <span className="login-mobile-mark" aria-hidden="true">
+              <img src="/pro-team-logo.png" alt="" />
             </span>
             <span className="login-kicker">
-              {mode === "login" ? "Welcome back" : "Create your account"}
+              {mode === "login" ? "Тавтай морил" : "Шинэ бүртгэл"}
             </span>
             <CardTitle>
               {mode === "login"
-                ? "Sign in to your workspace"
-                : "Join Acme Studio"}
+                ? "Workspace-даа нэвтрэх"
+                : "Acme Studio-д нэгдэх"}
             </CardTitle>
             <CardDescription>
               {mode === "login"
-                ? "Enter your account details or use a demo workspace profile."
-                : "Create a member account and start working with your team."}
+                ? "Бүртгэлийн мэдээллээ оруулах эсвэл demo эрх сонгоно уу."
+                : "Гишүүний бүртгэл үүсгээд багтайгаа ажиллаж эхлээрэй."}
             </CardDescription>
           </CardHeader>
 
           <CardContent>
             <Tabs value={mode} onValueChange={changeMode}>
-              <TabsList aria-label="Authentication">
-                <TabsTrigger value="login">Log in</TabsTrigger>
-                <TabsTrigger value="signup">Sign up</TabsTrigger>
+              <TabsList aria-label="Нэвтрэлт">
+                <TabsTrigger value="login">Нэвтрэх</TabsTrigger>
+                <TabsTrigger value="signup">Бүртгүүлэх</TabsTrigger>
               </TabsList>
 
               <TabsContent value="login">
                 <form className="auth-form" onSubmit={submitLogin}>
                   <div className="auth-field">
-                    <Label htmlFor="login-email">Work email</Label>
+                    <Label htmlFor="login-email">Ажлын и-мэйл</Label>
                     <Input
                       id="login-email"
                       type="email"
@@ -236,7 +235,7 @@ export function LoginScreen({
                     />
                   </div>
                   <div className="auth-field">
-                    <Label htmlFor="login-password">Password</Label>
+                    <Label htmlFor="login-password">Нууц үг</Label>
                     <span className="password-field">
                       <Input
                         id="login-password"
@@ -252,7 +251,7 @@ export function LoginScreen({
                       <button
                         type="button"
                         onClick={() => setShowPassword((current) => !current)}
-                        aria-label={showPassword ? "Hide password" : "Show password"}
+                        aria-label={showPassword ? "Нууц үг нуух" : "Нууц үг харах"}
                       >
                         {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                       </button>
@@ -265,9 +264,9 @@ export function LoginScreen({
                         checked={remember}
                         onCheckedChange={(checked) => setRemember(checked === true)}
                       />
-                      <Label htmlFor="remember">Keep me signed in</Label>
+                      <Label htmlFor="remember">Нэвтэрсэн хэвээр үлдэх</Label>
                     </span>
-                    <span>Demo password: nimbus</span>
+                    <span>Demo нууц үг: nimbus</span>
                   </div>
                   {error && (
                     <Alert variant="destructive">
@@ -278,18 +277,18 @@ export function LoginScreen({
                     {submitting ? (
                       <>
                         <LoaderCircle className="auth-spinner" size={17} />
-                        Signing in…
+                        Нэвтэрч байна…
                       </>
                     ) : (
                       <>
-                        Continue to workspace <ArrowRight size={18} />
+                        Workspace руу орох <ArrowRight size={18} />
                       </>
                     )}
                   </Button>
                 </form>
 
                 <div className="demo-divider">
-                  <span>or choose a demo role</span>
+                  <span>эсвэл demo эрх сонгох</span>
                 </div>
                 <div className="demo-account-grid">
                   {activeUsers.map((user) => (
@@ -326,7 +325,7 @@ export function LoginScreen({
               <TabsContent value="signup">
                 <form className="auth-form signup-form" onSubmit={submitSignup}>
                   <div className="auth-field">
-                    <Label htmlFor="signup-name">Full name</Label>
+                    <Label htmlFor="signup-name">Овог нэр</Label>
                     <Input
                       id="signup-name"
                       value={name}
@@ -335,12 +334,12 @@ export function LoginScreen({
                         setError("");
                       }}
                       autoComplete="name"
-                      placeholder="Your name"
+                      placeholder="Таны нэр"
                       required
                     />
                   </div>
                   <div className="auth-field">
-                    <Label htmlFor="signup-email">Work email</Label>
+                    <Label htmlFor="signup-email">Ажлын и-мэйл</Label>
                     <Input
                       id="signup-email"
                       type="email"
@@ -355,7 +354,7 @@ export function LoginScreen({
                     />
                   </div>
                   <div className="auth-field">
-                    <Label htmlFor="signup-password">Password</Label>
+                    <Label htmlFor="signup-password">Нууц үг</Label>
                     <span className="password-field">
                       <Input
                         id="signup-password"
@@ -366,21 +365,21 @@ export function LoginScreen({
                           setError("");
                         }}
                         autoComplete="new-password"
-                        placeholder="At least 8 characters"
+                        placeholder="Хамгийн багадаа 8 тэмдэгт"
                         minLength={8}
                         required
                       />
                       <button
                         type="button"
                         onClick={() => setShowPassword((current) => !current)}
-                        aria-label={showPassword ? "Hide password" : "Show password"}
+                        aria-label={showPassword ? "Нууц үг нуух" : "Нууц үг харах"}
                       >
                         {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                       </button>
                     </span>
                   </div>
                   <div className="auth-field">
-                    <Label htmlFor="signup-confirm">Confirm password</Label>
+                    <Label htmlFor="signup-confirm">Нууц үг давтах</Label>
                     <Input
                       id="signup-confirm"
                       type={showPassword ? "text" : "password"}
@@ -402,7 +401,7 @@ export function LoginScreen({
                       }
                     />
                     <Label htmlFor="terms">
-                      I agree to the workspace terms and privacy policy.
+                      Үйлчилгээний нөхцөл болон нууцлалын бодлогыг зөвшөөрч байна.
                     </Label>
                   </span>
                   {error && (
@@ -414,11 +413,11 @@ export function LoginScreen({
                     {submitting ? (
                       <>
                         <LoaderCircle className="auth-spinner" size={17} />
-                        Creating account…
+                        Бүртгэл үүсгэж байна…
                       </>
                     ) : (
                       <>
-                        Create member account <ArrowRight size={18} />
+                        Гишүүний бүртгэл үүсгэх <ArrowRight size={18} />
                       </>
                     )}
                   </Button>
@@ -426,7 +425,7 @@ export function LoginScreen({
                 <Alert className="signup-note">
                   <LockKeyhole size={16} />
                   <AlertDescription>
-                    New accounts join as members. An admin can update roles later.
+                    Шинэ бүртгэл Member эрхтэй үүснэ. Админ дараа нь эрхийг өөрчилнө.
                   </AlertDescription>
                 </Alert>
               </TabsContent>
@@ -436,7 +435,7 @@ export function LoginScreen({
           <CardFooter className="auth-card-footer">
             <span>
               <LockKeyhole size={13} />
-              Passwords are hashed and sessions stay in secure HttpOnly cookies.
+              Нууц үгийг hash хэлбэрээр, session-ийг аюулгүй HttpOnly cookie-д хадгална.
             </span>
           </CardFooter>
         </Card>

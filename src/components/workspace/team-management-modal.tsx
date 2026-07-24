@@ -73,10 +73,10 @@ export function TeamManagementModal({
       >
         <div className="modal-header">
           <div>
-            <span className="panel-kicker">Workspace access</span>
-            <h2>Team & roles</h2>
+            <span className="panel-kicker">Workspace хандалт</span>
+            <h2>Баг ба эрх</h2>
           </div>
-          <button className="icon-button" onClick={onClose} aria-label="Close">
+          <button className="icon-button" onClick={onClose} aria-label="Хаах">
             <X size={19} />
           </button>
         </div>
@@ -94,11 +94,11 @@ export function TeamManagementModal({
         </div>
 
         <div className="team-list-header">
-          <span>{activeUsers.length} workspace members</span>
+          <span>{activeUsers.length} workspace гишүүн</span>
           {canManage && (
             <button className="secondary-button" onClick={() => setAdding(true)}>
               <Plus size={15} />
-              Add member
+              Гишүүн нэмэх
             </button>
           )}
         </div>
@@ -106,17 +106,17 @@ export function TeamManagementModal({
         {adding && (
           <form className="add-member-form" onSubmit={addUser}>
             <label className="form-field">
-              <span>Name</span>
+              <span>Нэр</span>
               <input
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                placeholder="Full name"
+                placeholder="Овог нэр"
                 autoFocus
                 required
               />
             </label>
             <label className="form-field">
-              <span>Email</span>
+              <span>И-мэйл</span>
               <input
                 type="email"
                 value={email}
@@ -126,7 +126,7 @@ export function TeamManagementModal({
               />
             </label>
             <label className="form-field">
-              <span>Role</span>
+              <span>Эрх</span>
               <select
                 value={role}
                 onChange={(event) => setRole(event.target.value as UserRole)}
@@ -148,7 +148,7 @@ export function TeamManagementModal({
               </button>
               <button type="submit" className="primary-button">
                 <Check size={15} />
-                Add
+                Нэмэх
               </button>
             </div>
           </form>
@@ -161,7 +161,7 @@ export function TeamManagementModal({
               <div className="team-user-copy">
                 <strong>
                   {user.name}
-                  {user.id === currentUser.id && <small>You</small>}
+                  {user.id === currentUser.id && <small>Та</small>}
                 </strong>
                 <span>{user.email}</span>
               </div>
@@ -187,9 +187,9 @@ export function TeamManagementModal({
                 <button
                   className="deactivate-user"
                   onClick={() => {
-                    if (window.confirm(`Deactivate ${user.name}?`)) onDeactivate(user);
+                    if (window.confirm(`${user.name}-г идэвхгүй болгох уу?`)) onDeactivate(user);
                   }}
-                  title="Deactivate member"
+                  title="Гишүүнийг идэвхгүй болгох"
                 >
                   <UserX size={16} />
                 </button>
@@ -200,8 +200,8 @@ export function TeamManagementModal({
 
         {!canManage && (
           <div className="read-only-note">
-            Your {ROLE_LABELS[currentUser.role]} role can view the team but cannot
-            change access.
+            Таны {ROLE_LABELS[currentUser.role]} эрх багийг харах боломжтой боловч
+            хандалтыг өөрчлөх боломжгүй.
           </div>
         )}
       </section>

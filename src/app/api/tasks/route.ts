@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { authorize, getActor, getWorkspaceId } from "@/lib/api-auth";
 import { getDatabase, rowToTask } from "@/lib/db";
-import { hasPermission } from "@/lib/permissions";
+import { canAccessEveryProject, hasPermission } from "@/lib/permissions";
+import { notifyUsers } from "@/lib/notifications";
 import type { Task } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -25,7 +26,13 @@ export async function GET(request: Request) {
       SELECT
         tasks.id, tasks.title, tasks.project_id, projects.name AS project,
         tasks.group_name, tasks.status, tasks.priority, tasks.assignee,
-        tasks.parent_id,
+        tasks.parent_id, tasks.recurrence,
+        ARRAY(
+          SELECT task_dependencies.depends_on_id
+          FROM task_dependencies
+          WHERE task_dependencies.task_id = tasks.id
+          ORDER BY task_dependencies.created_at
+        ) AS dependency_ids,
         COALESCE(
           (
             SELECT JSONB_AGG(
@@ -55,6 +62,15 @@ export async function GET(request: Request) {
       FROM tasks
       JOIN projects ON projects.id = tasks.project_id
       WHERE projects.workspace_id = ${workspaceId}
+        AND (
+          ${canAccessEveryProject(actor)}
+          OR EXISTS (
+            SELECT 1
+            FROM project_members
+            WHERE project_members.project_id = projects.id
+              AND project_members.user_id = ${actor.id}
+          )
+        )
       ORDER BY tasks.created_at DESC
     `;
     return NextResponse.json({ tasks: rows.map((row) => rowToTask(row as never)) });
@@ -86,6 +102,13 @@ export async function POST(request: Request) {
     const workspaceId = getWorkspaceId(request);
     const assignees =
       task.assignees?.length ? task.assignees : [task.assignee];
+    const dependencyIds = Array.from(
+      new Set((task.dependencyIds ?? []).map(String)),
+    ).filter((dependencyId) => dependencyId !== task.id);
+    const recurrence = task.recurrence ?? "none";
+    if (!["none", "daily", "weekly", "monthly"].includes(recurrence)) {
+      return NextResponse.json({ error: "Invalid recurrence" }, { status: 400 });
+    }
     const assigneeIds = Array.from(
       new Set(assignees.map((assignee) => assignee.id)),
     );
@@ -104,6 +127,15 @@ export async function POST(request: Request) {
       WHERE id = ${task.projectId}
         AND workspace_id = ${workspaceId}
         AND archived = FALSE
+        AND (
+          ${canAccessEveryProject(auth.user)}
+          OR EXISTS (
+            SELECT 1
+            FROM project_members
+            WHERE project_members.project_id = projects.id
+              AND project_members.user_id = ${auth.user.id}
+          )
+        )
       LIMIT 1
     `;
     if (!projects.length) {
@@ -141,6 +173,22 @@ export async function POST(request: Request) {
         );
       }
     }
+    if (dependencyIds.length) {
+      const dependencyRows = await sql`
+        SELECT tasks.id
+        FROM tasks
+        JOIN projects ON projects.id = tasks.project_id
+        WHERE tasks.id = ANY(${dependencyIds}::text[])
+          AND tasks.project_id = ${task.projectId}
+          AND projects.workspace_id = ${workspaceId}
+      `;
+      if (dependencyRows.length !== dependencyIds.length) {
+        return NextResponse.json(
+          { error: "Every dependency must belong to the same project" },
+          { status: 400 },
+        );
+      }
+    }
 
     const primaryAssignee =
       assignees.find((assignee) => assignee.id === assigneeIds[0]) ??
@@ -150,7 +198,7 @@ export async function POST(request: Request) {
       INSERT INTO tasks (
         id, title, project_id, project, group_name, status, priority,
         assignee_id, assignee, parent_id, created_by, updated_by,
-        due_date, tags, progress, description, created_at,
+        recurrence, due_date, tags, progress, description, created_at,
         custom_fields, archived, archived_at
       )
       VALUES (
@@ -159,7 +207,7 @@ export async function POST(request: Request) {
         ${task.status}, ${task.priority}, ${primaryAssignee.id},
         ${JSON.stringify(primaryAssignee)}::jsonb, ${task.parentId ?? null},
         ${auth.user.id}, ${auth.user.id},
-        ${task.dueDate}::date, ${task.tags}, ${task.progress},
+        ${recurrence}, ${task.dueDate}::date, ${task.tags}, ${task.progress},
         ${task.description}, ${task.createdAt}::timestamptz,
         ${JSON.stringify(task.customFields ?? {})}::jsonb,
         ${task.archived ?? false},
@@ -173,6 +221,13 @@ export async function POST(request: Request) {
         ON CONFLICT (task_id, user_id) DO NOTHING
       `;
     }
+    for (const dependencyId of dependencyIds) {
+      await sql`
+        INSERT INTO task_dependencies (task_id, depends_on_id, created_by)
+        VALUES (${task.id}, ${dependencyId}, ${auth.user.id})
+        ON CONFLICT (task_id, depends_on_id) DO NOTHING
+      `;
+    }
     await sql`
       INSERT INTO activity_logs (
         workspace_id, project_id, task_id, actor_id, event_type, payload
@@ -182,6 +237,15 @@ export async function POST(request: Request) {
         'task.created', ${JSON.stringify({ title: task.title })}::jsonb
       )
     `;
+    await notifyUsers(sql, {
+      workspaceId,
+      userIds: assigneeIds,
+      actorId: auth.user.id,
+      taskId: task.id,
+      type: "task.assigned",
+      title: `${auth.user.name} assigned you a task`,
+      body: task.title,
+    });
 
     return NextResponse.json(
       {
@@ -190,6 +254,8 @@ export async function POST(request: Request) {
           assignee: primaryAssignee,
           assignees,
           parentId: task.parentId ?? null,
+          dependencyIds,
+          recurrence,
         },
       },
       { status: 201 },

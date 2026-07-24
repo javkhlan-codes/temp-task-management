@@ -12,6 +12,8 @@ type TaskRow = {
   assignee: Task["assignee"];
   assignees?: Task["assignees"];
   parent_id?: string | null;
+  dependency_ids?: string[];
+  recurrence?: Task["recurrence"];
   due_date: string | Date;
   tags: string[];
   progress: number;
@@ -53,6 +55,8 @@ export function rowToTask(row: TaskRow): Task {
         ? row.assignees
         : [row.assignee],
     parentId: row.parent_id ?? null,
+    dependencyIds: row.dependency_ids ?? [],
+    recurrence: row.recurrence ?? "none",
     dueDate,
     tags: row.tags ?? [],
     progress: row.progress,

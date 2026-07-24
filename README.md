@@ -1,4 +1,4 @@
-# Nimbus Task Management
+# Pro Team Task Management
 
 A polished Monday-style task management workspace built with Next.js. It includes
 light and dark themes, list/kanban/calendar views, filters, task editing,
@@ -11,7 +11,7 @@ progress, and tags. Column names, types, and dropdown options can be edited at a
 time; columns can also be removed.
 
 Workspace access includes database-backed sign-up, login, logout, HttpOnly
-sessions, plus Admin, Manager, Member, and Viewer roles. Tasks can be assigned to multiple active members,
+sessions, plus Admin, Manager, Member, Guest, and Viewer roles. Tasks can be assigned to multiple active members,
 filtered through My Work, broken into nested subtasks, archived/restored by
 authorized roles, and permanently deleted by admins. The account menu can switch
 demo identities so every permission level is easy to test.
@@ -20,6 +20,7 @@ Projects are database-backed workspace entities with owners, members, colors,
 descriptions, task counts, archive/restore, and guarded deletion. Tasks and
 assignees use normalized foreign keys; project-specific custom columns no longer
 leak between projects. See [requirements](docs/REQUIREMENTS.md),
+[URS traceability](docs/URS-TRACEABILITY.md),
 [architecture](docs/ARCHITECTURE.md), and the [ERD](docs/ERD.md).
 
 ## Run locally
@@ -37,7 +38,8 @@ workspace persistence require the configured Neon database.
 
 1. Copy `.env.example` to `.env.local` (an existing `.env` also works).
 2. Add the pooled Neon Postgres connection string as `DATABASE_URL`.
-3. Initialize the schema and demo rows:
+3. Set `NEXT_PUBLIC_SITE_URL` to the production origin on Vercel.
+4. Initialize the schema and demo rows:
 
 ```bash
 npm run db:setup

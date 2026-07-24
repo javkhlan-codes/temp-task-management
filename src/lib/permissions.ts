@@ -12,20 +12,24 @@ export type Permission =
   | "createProject"
   | "editProject"
   | "archiveProject"
-  | "deleteProject";
+  | "deleteProject"
+  | "commentTask"
+  | "uploadAttachment";
 
 export const ROLE_LABELS: Record<UserRole, string> = {
-  admin: "Admin",
-  manager: "Manager",
-  member: "Member",
-  viewer: "Viewer",
+  admin: "Админ",
+  manager: "Менежер",
+  member: "Гишүүн",
+  guest: "Зочин",
+  viewer: "Ажиглагч",
 };
 
 export const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
-  admin: "Full workspace, user, and configuration access.",
-  manager: "Manages tasks, assignments, columns, and archives.",
-  member: "Creates tasks and edits work assigned to them.",
-  viewer: "Read-only access to workspace tasks.",
+  admin: "Workspace, хэрэглэгч, тохиргоог бүрэн удирдана.",
+  manager: "Таск, хуваарилалт, багана, архивыг удирдана.",
+  member: "Таск үүсгэж, өөрт хуваарилагдсан ажлыг шинэчилнэ.",
+  guest: "Зөвхөн хуваалцсан төсөлдөө хамтран ажиллана.",
+  viewer: "Workspace-ийн мэдээллийг зөвхөн уншина.",
 };
 
 const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
@@ -42,6 +46,8 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     "editProject",
     "archiveProject",
     "deleteProject",
+    "commentTask",
+    "uploadAttachment",
   ]),
   manager: new Set([
     "createTask",
@@ -53,8 +59,16 @@ const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
     "createProject",
     "editProject",
     "archiveProject",
+    "commentTask",
+    "uploadAttachment",
   ]),
-  member: new Set(["createTask", "editOwnTask"]),
+  member: new Set([
+    "createTask",
+    "editOwnTask",
+    "commentTask",
+    "uploadAttachment",
+  ]),
+  guest: new Set(["commentTask", "uploadAttachment"]),
   viewer: new Set(),
 };
 
@@ -75,5 +89,9 @@ export function canEditTask(user: WorkspaceUser, task: Task): boolean {
 }
 
 export function canOpenTask(user: WorkspaceUser, task: Task): boolean {
-  return canEditTask(user, task) || user.role === "viewer";
+  return user.active && (canEditTask(user, task) || ["guest", "viewer"].includes(user.role));
+}
+
+export function canAccessEveryProject(user: WorkspaceUser): boolean {
+  return user.role === "admin" || user.role === "manager";
 }

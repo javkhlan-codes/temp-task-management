@@ -421,6 +421,24 @@ for (const statement of splitSqlStatements(authenticationMigration)) {
   await sql(statement);
 }
 
+const ursCollaborationMigration = readFileSync(
+  new URL("../db/migrations/005_urs_collaboration.sql", import.meta.url),
+  "utf8",
+);
+
+for (const statement of splitSqlStatements(ursCollaborationMigration)) {
+  await sql(statement);
+}
+
+const taskPlanningMigration = readFileSync(
+  new URL("../db/migrations/006_task_planning.sql", import.meta.url),
+  "utf8",
+);
+
+for (const statement of splitSqlStatements(taskPlanningMigration)) {
+  await sql(statement);
+}
+
 function hashDemoPassword(password) {
   const salt = randomBytes(16).toString("hex");
   const derived = scryptSync(password, salt, 64);
@@ -525,5 +543,5 @@ for (const [taskId, userId] of demoAssignments) {
 }
 
 console.log(
-  "Workspace, task collaboration, and authentication migrations are applied.",
+  "Workspace, authentication, collaboration, notification, and task-planning migrations are applied.",
 );
