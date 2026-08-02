@@ -30,6 +30,7 @@ npm install
 npm run dev
 ```
 
+
 Open [http://localhost:8000](http://localhost:8000). Authentication and shared
 workspace persistence require the configured Neon database.
 
