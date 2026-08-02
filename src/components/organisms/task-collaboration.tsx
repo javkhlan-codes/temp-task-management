@@ -12,6 +12,15 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { UserAvatar } from "@/components/atoms/user-avatar";
+import { Button } from "@/components/ui/button";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { hasPermission } from "@/lib/permissions";
 import type {
   ActivityEntry,
@@ -19,6 +28,7 @@ import type {
   TaskComment,
   WorkspaceUser,
 } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 type CollaborationTab = "comments" | "files" | "activity";
 
@@ -211,90 +221,122 @@ export function TaskCollaboration({
     }
   };
 
+  const emptyClass =
+    "flex min-h-[100px] items-center justify-center gap-[7px] rounded-lg border border-dashed border-border p-4 text-center text-[9px] leading-[1.5] text-muted-foreground";
+
   return (
-    <section className="task-collaboration" aria-label="Task collaboration">
-      <div className="collaboration-tabs">
-        <button
-          type="button"
-          className={tab === "comments" ? "active" : ""}
-          onClick={() => setTab("comments")}
+    <section
+      className="border-t border-border px-[23px] pb-5"
+      aria-label="Task collaboration"
+    >
+      <Tabs
+        value={tab}
+        onValueChange={(value) => setTab(value as CollaborationTab)}
+        className="gap-0"
+      >
+        <TabsList
+          variant="line"
+          className="h-11 w-full justify-start gap-1 border-b border-border p-0"
         >
-          <MessageSquareText size={15} />
-          Сэтгэгдэл
-          <span>{comments.length}</span>
-        </button>
-        <button
-          type="button"
-          className={tab === "files" ? "active" : ""}
-          onClick={() => setTab("files")}
-        >
-          <Paperclip size={15} />
-          Файл
-          <span>{attachments.length}</span>
-        </button>
-        <button
-          type="button"
-          className={tab === "activity" ? "active" : ""}
-          onClick={() => setTab("activity")}
-        >
-          <Activity size={15} />
-          Түүх
-        </button>
-      </div>
+          <TabsTrigger
+            value="comments"
+            className="h-full flex-none gap-1.5 px-2.5 text-[9px] after:bottom-0 after:bg-brand"
+          >
+            <MessageSquareText size={15} />
+            Сэтгэгдэл
+            <span className="rounded-full bg-surface-soft px-1.5 py-0.5 text-[7px]">
+              {comments.length}
+            </span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="files"
+            className="h-full flex-none gap-1.5 px-2.5 text-[9px] after:bottom-0 after:bg-brand"
+          >
+            <Paperclip size={15} />
+            Файл
+            <span className="rounded-full bg-surface-soft px-1.5 py-0.5 text-[7px]">
+              {attachments.length}
+            </span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="activity"
+            className="h-full flex-none gap-1.5 px-2.5 text-[9px] after:bottom-0 after:bg-brand"
+          >
+            <Activity size={15} />
+            Түүх
+          </TabsTrigger>
+        </TabsList>
 
-      {mode !== "database" ? (
-        <div className="collaboration-empty">
-          Хамтын ажиллагааны мэдээлэл Neon database холбогдсон үед хадгалагдана.
-        </div>
-      ) : loading ? (
-        <div className="collaboration-empty">
-          <LoaderCircle className="spin" size={18} /> Мэдээлэл ачаалж байна…
-        </div>
-      ) : (
-        <>
-          {error && <div className="collaboration-error">{error}</div>}
+        {mode !== "database" ? (
+          <div className={cn(emptyClass, "mt-3")}>
+            Хамтын ажиллагааны мэдээлэл Neon database холбогдсон үед
+            хадгалагдана.
+          </div>
+        ) : loading ? (
+          <div className={cn(emptyClass, "mt-3")}>
+            <LoaderCircle className="animate-spin" size={18} /> Мэдээлэл ачаалж
+            байна…
+          </div>
+        ) : (
+          <>
+            {error && (
+              <div className="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-[11px] py-[9px] text-[10px] text-danger">
+                {error}
+              </div>
+            )}
 
-          {tab === "comments" && (
-            <div className="comment-panel">
-              <div className="comment-list">
+            <TabsContent value="comments" className="pt-3">
+              <div className="flex max-h-[280px] flex-col gap-3 overflow-y-auto pr-1">
                 {comments.map((comment) => (
-                  <article className="comment-item" key={comment.id}>
-                    <span className={`avatar avatar-${comment.author.tone}`}>
-                      {comment.author.initials}
-                    </span>
-                    <div>
-                      <header>
-                        <strong>{comment.author.name}</strong>
-                        <time>{formatTimestamp(comment.createdAt)}</time>
+                  <article
+                    className="flex items-start gap-2.5"
+                    key={comment.id}
+                  >
+                    <UserAvatar user={comment.author} size="sm" />
+                    <div className="min-w-0 flex-1 rounded-[4px_11px_11px] border border-border bg-surface-soft px-[11px] py-[9px]">
+                      <header className="flex items-center gap-2">
+                        <strong className="text-[10px]">
+                          {comment.author.name}
+                        </strong>
+                        <time className="text-[8px] text-muted-foreground">
+                          {formatTimestamp(comment.createdAt)}
+                        </time>
                       </header>
-                      <p>{comment.body}</p>
+                      <p className="mt-1.5 mb-0 whitespace-pre-wrap text-[10px] leading-[1.55] break-words text-[var(--text-soft)]">
+                        {comment.body}
+                      </p>
                     </div>
                   </article>
                 ))}
                 {!comments.length && (
-                  <div className="collaboration-empty">
-                    Анхны сэтгэгдлийг бичиж, багийн гишүүнээ @mention хийгээрэй.
+                  <div className={emptyClass}>
+                    Анхны сэтгэгдлийг бичиж, багийн гишүүнээ @mention
+                    хийгээрэй.
                   </div>
                 )}
               </div>
 
               {canComment && (
-                <div className="comment-composer">
-                  <textarea
+                <div className="mt-3.5 border-t border-border pt-[13px]">
+                  <Textarea
+                    className="min-h-[74px] resize-y rounded-[9px] bg-surface-soft p-2.5 text-[10px] leading-[1.5]"
                     value={body}
                     onChange={(event) => setBody(event.target.value)}
                     placeholder="Шинэчлэл эсвэл сэтгэгдэл бичих…"
                     rows={3}
                     maxLength={5000}
                     onKeyDown={(event) => {
-                      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                      if (
+                        (event.metaKey || event.ctrlKey) &&
+                        event.key === "Enter"
+                      ) {
                         event.preventDefault();
                         void submitComment();
                       }
                     }}
                   />
-                  <div className="mention-row">
-                    <span>
+                  <div className="flex items-center gap-1 overflow-x-auto px-px py-2">
+                    <span className="inline-flex items-center gap-[3px] text-[8px] whitespace-nowrap text-muted-foreground">
                       <AtSign size={14} /> Mention:
                     </span>
                     {users
@@ -308,41 +350,49 @@ export function TaskCollaboration({
                       .map((user) => (
                         <button
                           type="button"
-                          className={mentionIds.includes(user.id) ? "selected" : ""}
+                          className={cn(
+                            "rounded-full border border-border bg-surface-soft px-[7px] py-1 text-[8px] whitespace-nowrap text-[var(--text-soft)]",
+                            mentionIds.includes(user.id) &&
+                              "border-[color-mix(in_srgb,var(--brand)_38%,var(--border))] bg-brand-subtle text-brand",
+                          )}
                           onClick={() => addMention(user)}
+                          aria-pressed={mentionIds.includes(user.id)}
                           key={user.id}
                         >
                           {user.name}
                         </button>
                       ))}
                   </div>
-                  <div className="comment-actions">
-                    <small>⌘ + Enter дарж илгээнэ</small>
-                    <button
+                  <div className="flex items-center justify-between">
+                    <small className="text-[8px] text-muted-foreground">
+                      ⌘ + Enter дарж илгээнэ
+                    </small>
+                    <Button
                       type="button"
-                      className="primary-button"
+                      className="h-8 bg-brand text-[9px] text-brand-foreground hover:bg-brand-hover"
                       disabled={!body.trim() || submitting}
                       onClick={() => void submitComment()}
                     >
                       {submitting ? (
-                        <LoaderCircle className="spin" size={15} />
+                        <LoaderCircle className="animate-spin" size={15} />
                       ) : (
                         <Send size={15} />
                       )}
                       Илгээх
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
-            </div>
-          )}
+            </TabsContent>
 
-          {tab === "files" && (
-            <div className="attachment-panel">
+            <TabsContent value="files" className="pt-3">
               {canUpload && (
                 <button
                   type="button"
-                  className={`attachment-dropzone ${dragging ? "dragging" : ""}`}
+                  className={cn(
+                    "flex w-full items-center justify-center gap-[11px] rounded-[11px] border border-dashed border-input bg-surface-soft p-4 text-brand hover:border-brand hover:bg-brand-subtle",
+                    dragging && "border-brand bg-brand-subtle",
+                  )}
                   onClick={() => fileInput.current?.click()}
                   onDragOver={(event) => {
                     event.preventDefault();
@@ -357,9 +407,13 @@ export function TaskCollaboration({
                   }}
                 >
                   <UploadCloud size={21} />
-                  <span>
-                    <strong>Файлаа энд чирж оруулна уу</strong>
-                    <small>эсвэл дарж сонгоно · хамгийн ихдээ 3 MB</small>
+                  <span className="flex flex-col text-left">
+                    <strong className="text-[10px] text-foreground">
+                      Файлаа энд чирж оруулна уу
+                    </strong>
+                    <small className="mt-0.5 text-[8px] text-muted-foreground">
+                      эсвэл дарж сонгоно · хамгийн ихдээ 3 MB
+                    </small>
                   </span>
                 </button>
               )}
@@ -372,21 +426,27 @@ export function TaskCollaboration({
                   if (file) void uploadFile(file);
                 }}
               />
-              <div className="attachment-list">
+              <div className="mt-2.5 flex flex-col gap-[7px]">
                 {attachments.map((attachment) => (
-                  <div className="attachment-item" key={attachment.id}>
-                    <span>
+                  <div
+                    className="flex items-center gap-[9px] rounded-[9px] border border-border px-[9px] py-2"
+                    key={attachment.id}
+                  >
+                    <span className="flex size-[31px] items-center justify-center rounded-[7px] bg-brand-subtle text-brand">
                       <FileText size={18} />
                     </span>
-                    <div>
-                      <strong>{attachment.fileName}</strong>
-                      <small>
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <strong className="truncate text-[10px]">
+                        {attachment.fileName}
+                      </strong>
+                      <small className="mt-0.5 text-[8px] text-muted-foreground">
                         {formatFileSize(attachment.fileSize)} ·{" "}
                         {attachment.uploader.name} ·{" "}
                         {formatTimestamp(attachment.createdAt)}
                       </small>
                     </div>
                     <a
+                      className="flex size-[30px] items-center justify-center rounded-[7px] text-muted-foreground hover:bg-surface-hover hover:text-brand"
                       href={`/api/attachments/${attachment.id}`}
                       aria-label={`${attachment.fileName} татах`}
                     >
@@ -395,33 +455,49 @@ export function TaskCollaboration({
                   </div>
                 ))}
                 {!attachments.length && (
-                  <div className="collaboration-empty">Одоогоор хавсаргасан файл алга.</div>
+                  <div className={emptyClass}>
+                    Одоогоор хавсаргасан файл алга.
+                  </div>
                 )}
               </div>
-            </div>
-          )}
+            </TabsContent>
 
-          {tab === "activity" && (
-            <div className="task-activity-list">
+            <TabsContent
+              value="activity"
+              className="flex max-h-[300px] flex-col gap-[11px] overflow-y-auto pt-3"
+            >
               {activity.map((entry) => (
-                <div className="task-activity-item" key={entry.id}>
-                  <span className={`avatar avatar-${entry.actor?.tone ?? "slate"}`}>
-                    {entry.actor?.initials ?? "—"}
-                  </span>
-                  <p>
-                    <strong>{entry.actor?.name ?? "System"}</strong>{" "}
+                <div className="flex items-start gap-2.5" key={entry.id}>
+                  <UserAvatar
+                    user={
+                      entry.actor ?? {
+                        name: "System",
+                        initials: "—",
+                        tone: "slate",
+                      }
+                    }
+                    size="sm"
+                  />
+                  <p className="m-0 flex flex-1 flex-wrap gap-x-1 text-[9px] leading-[1.45] text-[var(--text-soft)]">
+                    <strong className="text-foreground">
+                      {entry.actor?.name ?? "System"}
+                    </strong>{" "}
                     {activityText(entry)}
-                    <time>{formatTimestamp(entry.createdAt)}</time>
+                    <time className="basis-full text-[8px] text-muted-foreground">
+                      {formatTimestamp(entry.createdAt)}
+                    </time>
                   </p>
                 </div>
               ))}
               {!activity.length && (
-                <div className="collaboration-empty">Үйлдлийн түүх хараахан алга.</div>
+                <div className={emptyClass}>
+                  Үйлдлийн түүх хараахан алга.
+                </div>
               )}
-            </div>
-          )}
-        </>
-      )}
+            </TabsContent>
+          </>
+        )}
+      </Tabs>
     </section>
   );
 }

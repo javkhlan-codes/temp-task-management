@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
 const siteUrl =
@@ -43,7 +44,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="mn" suppressHydrationWarning>
-      <body>{children}</body>
+      <body>
+        <TooltipProvider>{children}</TooltipProvider>
+      </body>
     </html>
   );
 }
