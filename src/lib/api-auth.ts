@@ -33,11 +33,7 @@ export async function getActor(
   sql: SqlClient,
 ): Promise<WorkspaceUser | null> {
   const sessionUserId = await resolveSessionUserId(request, sql);
-  const demoActorId = request.headers.get("x-workspace-user-id");
-  const actorId =
-    process.env.NODE_ENV === "production"
-      ? sessionUserId
-      : demoActorId || sessionUserId;
+  const actorId = sessionUserId;
   const workspaceId = getWorkspaceId(request);
   if (!actorId) return null;
 
@@ -48,6 +44,9 @@ export async function getActor(
     FROM users
     JOIN workspace_members
       ON workspace_members.user_id = users.id
+    JOIN user_totp
+      ON user_totp.user_id = users.id
+      AND user_totp.verified_at IS NOT NULL
     WHERE users.id = ${actorId}
       AND workspace_members.workspace_id = ${workspaceId}
       AND workspace_members.active = TRUE

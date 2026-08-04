@@ -8,18 +8,16 @@ import {
   LoaderCircle,
   LockKeyhole,
   Moon,
-  ShieldCheck,
   Sun,
-  Users,
 } from "lucide-react";
 import { useState } from "react";
 import { BrandLogo } from "@/components/atoms/brand-logo";
+import { ForgotPasswordDialog } from "@/components/auth/forgot-password-dialog";
+import { TotpSetupDialog } from "@/components/auth/totp-setup-dialog";
 import { IconButton } from "@/components/atoms/icon-button";
 import { UserAvatar } from "@/components/atoms/user-avatar";
 import { AuthLayout } from "@/components/templates/auth-layout";
-import { ROLE_LABELS } from "@/lib/permissions";
 import type { WorkspaceUser } from "@/lib/types";
-import { cn } from "@/lib/utils";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -57,8 +55,8 @@ export function LoginScreen({
     (user) => user.active && user.id !== "unassigned",
   );
   const [mode, setMode] = useState<AuthMode>("login");
-  const [email, setEmail] = useState(activeUsers[0]?.email ?? "");
-  const [password, setPassword] = useState("nimbus");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -66,6 +64,7 @@ export function LoginScreen({
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [totpUser, setTotpUser] = useState<WorkspaceUser | null>(null);
 
   const authenticate = async (
     endpoint: "/api/auth/login" | "/api/auth/signup",
@@ -81,12 +80,18 @@ export function LoginScreen({
       });
       const result = (await response.json()) as {
         user?: WorkspaceUser;
+        requiresTotpSetup?: boolean;
         error?: string;
       };
       if (!response.ok || !result.user) {
         throw new Error(result.error ?? "Нэвтрэх хүсэлтийг боловсруулах боломжгүй.");
       }
-      onAuthenticated(result.user);
+      if (result.requiresTotpSetup) {
+        setTotpUser(result.user);
+        setSubmitting(false);
+      } else {
+        onAuthenticated(result.user);
+      }
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -136,13 +141,14 @@ export function LoginScreen({
       setEmail("");
       setPassword("");
     } else {
-      setEmail(activeUsers[0]?.email ?? "");
-      setPassword("nimbus");
+      setEmail("");
+      setPassword("");
     }
   };
 
   return (
-    <AuthLayout
+    <>
+      <AuthLayout
       showcase={
       <section className="relative flex min-h-screen flex-col overflow-hidden bg-[radial-gradient(circle_at_15%_12%,rgba(255,255,255,0.2),transparent_26%),radial-gradient(circle_at_80%_86%,var(--login-accent),transparent_24%),linear-gradient(145deg,var(--brand-hero-start)_0%,var(--brand-hero-middle)_52%,var(--brand-hero-end)_100%)] p-[clamp(32px,5vw,70px)] text-white after:absolute after:top-[26%] after:-right-[155px] after:h-[260px] after:w-[390px] after:rotate-[18deg] after:rounded-[42px] after:border after:border-white/[0.13] after:content-[''] max-auth:p-[38px] max-mobile:hidden">
         <div className="relative z-[1] flex items-center gap-[11px] font-heading text-[22px] font-extrabold tracking-[-0.7px]">
@@ -218,8 +224,8 @@ export function LoginScreen({
             </CardTitle>
             <CardDescription className="text-xs leading-[1.6] text-muted-foreground">
               {mode === "login"
-                ? "Бүртгэлийн мэдээллээ оруулах эсвэл demo эрх сонгоно уу."
-                : "Гишүүний бүртгэл үүсгээд багтайгаа ажиллаж эхлээрэй."}
+                ? "Бүртгэлийн мэдээллээ оруулж нэвтэрнэ үү."
+                : "Шинэ бүртгэл үүсгээд authenticator-аа идэвхжүүлнэ үү."}
             </CardDescription>
           </CardHeader>
 
@@ -311,7 +317,14 @@ export function LoginScreen({
                         Нэвтэрсэн хэвээр үлдэх
                       </Label>
                     </span>
-                    <span>Demo нууц үг: nimbus</span>
+                    <ForgotPasswordDialog
+                      defaultEmail={email}
+                      onComplete={(recoveryEmail) => {
+                        setEmail(recoveryEmail);
+                        setPassword("");
+                        setError("");
+                      }}
+                    />
                   </div>
                   {error && (
                     <Alert
@@ -324,6 +337,7 @@ export function LoginScreen({
                     </Alert>
                   )}
                   <Button
+                    type="submit"
                     className="h-[46px] w-full gap-[9px] rounded-[9px] bg-[linear-gradient(135deg,var(--brand),var(--brand-hover))] text-[11px] font-bold text-white shadow-[0_10px_25px_color-mix(in_srgb,var(--brand)_24%,transparent)] hover:bg-[linear-gradient(135deg,var(--brand-hover),var(--brand-hero-end))]"
                     size="lg"
                     disabled={submitting}
@@ -341,43 +355,6 @@ export function LoginScreen({
                   </Button>
                 </form>
 
-                <div className="my-[25px] mb-3.5 flex items-center gap-3 text-[9px] text-muted-foreground before:h-px before:flex-1 before:bg-border before:content-[''] after:h-px after:flex-1 after:bg-border after:content-['']">
-                  <span>эсвэл demo эрх сонгох</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 max-mobile:grid-cols-1">
-                  {activeUsers.map((user) => (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className={cn(
-                        "grid h-auto min-w-0 grid-cols-[31px_1fr] justify-stretch gap-[9px] whitespace-normal rounded-[9px] border-border bg-surface-soft p-[9px] text-left leading-[normal] hover:bg-surface-hover",
-                        email === user.email &&
-                          "border-[color-mix(in_srgb,var(--brand)_45%,var(--border))] bg-brand-subtle",
-                      )}
-                      onClick={() => {
-                        setEmail(user.email);
-                        setPassword("nimbus");
-                        setError("");
-                      }}
-                      key={user.id}
-                    >
-                      <UserAvatar user={user} size="md" />
-                      <span className="min-w-0">
-                        <strong className="flex min-w-0 text-[9px]">
-                          {user.name}
-                        </strong>
-                        <small className="mt-[3px] flex min-w-0 items-center gap-1 text-[8px] text-muted-foreground">
-                          {user.role === "admin" ? (
-                            <ShieldCheck size={11} />
-                          ) : (
-                            <Users size={11} />
-                          )}
-                          {ROLE_LABELS[user.role]}
-                        </small>
-                      </span>
-                    </Button>
-                  ))}
-                </div>
               </TabsContent>
 
               <TabsContent className="mt-[21px]" value="signup">
@@ -495,6 +472,7 @@ export function LoginScreen({
                     </Alert>
                   )}
                   <Button
+                    type="submit"
                     className="h-[46px] w-full gap-[9px] rounded-[9px] bg-[linear-gradient(135deg,var(--brand),var(--brand-hover))] text-[11px] font-bold text-white shadow-[0_10px_25px_color-mix(in_srgb,var(--brand)_24%,transparent)] hover:bg-[linear-gradient(135deg,var(--brand-hover),var(--brand-hero-end))]"
                     size="lg"
                     disabled={submitting}
@@ -514,7 +492,7 @@ export function LoginScreen({
                 <Alert className="mt-3.5 rounded-lg px-[11px] py-2.5 text-[9px]">
                   <LockKeyhole size={16} />
                   <AlertDescription className="text-[9px]">
-                    Шинэ бүртгэл Member эрхтэй үүснэ. Админ дараа нь эрхийг өөрчилнө.
+                    Хамгийн эхний бүртгэл Admin, дараагийн бүртгэлүүд Member эрхтэй үүснэ.
                   </AlertDescription>
                 </Alert>
               </TabsContent>
@@ -529,6 +507,22 @@ export function LoginScreen({
           </CardFooter>
         </Card>
       </section>
-    </AuthLayout>
+      </AuthLayout>
+      {totpUser && (
+        <TotpSetupDialog
+          open
+          mandatory
+          user={totpUser}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setTotpUser(null);
+          }}
+          onComplete={() => {
+            const authenticatedUser = totpUser;
+            setTotpUser(null);
+            onAuthenticated(authenticatedUser);
+          }}
+        />
+      )}
+    </>
   );
 }

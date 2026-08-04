@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDatabase } from "@/lib/db";
-import { resolveSessionUserId } from "@/lib/session";
+import { resolveVerifiedSessionUserId } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -13,7 +13,7 @@ async function requireWorkspaceAdmin(
   workspaceId: string,
   sql: NonNullable<ReturnType<typeof getDatabase>>,
 ) {
-  const userId = await resolveSessionUserId(request, sql);
+  const userId = await resolveVerifiedSessionUserId(request, sql);
   if (!userId) return null;
   const rows = await sql`
     SELECT 1
@@ -84,6 +84,12 @@ export async function DELETE(request: Request, context: RouteContext) {
   }
   try {
     const { id } = await context.params;
+    if (id === "workspace-acme") {
+      return NextResponse.json(
+        { error: "The primary workspace cannot be deleted" },
+        { status: 409 },
+      );
+    }
     const userId = await requireWorkspaceAdmin(request, id, sql);
     if (!userId) {
       return NextResponse.json({ error: "Admin access required" }, { status: 403 });

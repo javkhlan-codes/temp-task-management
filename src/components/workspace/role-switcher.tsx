@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, LogOut, ShieldCheck, Users } from "lucide-react";
+import { ChevronDown, KeyRound, LogOut, ShieldCheck, Users } from "lucide-react";
 import { UserAvatar } from "@/components/atoms/user-avatar";
 import {
   DropdownMenu,
@@ -15,10 +15,12 @@ import type { WorkspaceUser } from "@/lib/types";
 export function RoleSwitcher({
   currentUser,
   onManageTeam,
+  onSetupTotp,
   onLogout,
 }: {
   currentUser: WorkspaceUser;
   onManageTeam: () => void;
+  onSetupTotp: () => void;
   onLogout: () => void;
 }) {
   return (
@@ -69,6 +71,13 @@ export function RoleSwitcher({
         >
           <Users size={15} />
           Баг ба эрх удирдах
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="h-auto rounded-none border-t border-border bg-surface-soft px-3.5 py-[11px] text-[9px] text-[var(--text-soft)] focus:bg-surface-hover focus:text-brand"
+          onClick={onSetupTotp}
+        >
+          <KeyRound size={15} />
+          Authenticator шинэчлэх
         </DropdownMenuItem>
         <DropdownMenuItem
           variant="destructive"

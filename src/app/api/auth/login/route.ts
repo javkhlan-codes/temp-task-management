@@ -34,12 +34,15 @@ export async function POST(request: Request) {
       SELECT
         users.id, users.name, users.email, users.initials, users.tone,
         workspace_members.role, workspace_members.active,
-        user_credentials.password_hash
+        user_credentials.password_hash,
+        user_totp.verified_at AS totp_verified_at
       FROM users
       JOIN workspace_members
         ON workspace_members.user_id = users.id
       JOIN user_credentials
         ON user_credentials.user_id = users.id
+      LEFT JOIN user_totp
+        ON user_totp.user_id = users.id
       WHERE LOWER(users.email) = ${email}
         AND workspace_members.workspace_id = 'workspace-acme'
         AND workspace_members.active = TRUE
@@ -55,6 +58,7 @@ export async function POST(request: Request) {
           role: "admin" | "manager" | "member" | "viewer";
           active: boolean;
           password_hash: string;
+          totp_verified_at: string | null;
         }
       | undefined;
     if (!row || !(await verifyPassword(password, row.password_hash))) {
@@ -70,7 +74,10 @@ export async function POST(request: Request) {
       row.id,
       persistent,
     );
-    const response = NextResponse.json({ user: rowToUser(row) });
+    const response = NextResponse.json({
+      user: rowToUser(row),
+      requiresTotpSetup: !row.totp_verified_at,
+    });
     setSessionCookie(response, token, expiresAt, persistent);
     return response;
   } catch (error) {

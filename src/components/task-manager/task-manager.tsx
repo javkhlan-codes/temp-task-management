@@ -1,8 +1,9 @@
 "use client";
 
 import { Check } from "lucide-react";
+import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { PEOPLE } from "@/lib/demo-data";
+import { TotpSetupDialog } from "@/components/auth/totp-setup-dialog";
 import { canEditTask, hasPermission } from "@/lib/permissions";
 import { RoleSwitcher } from "@/components/workspace/role-switcher";
 import { ProjectDialog } from "@/components/organisms/project-dialog";
@@ -74,6 +75,7 @@ export function TaskManager() {
     setMonth,
     switchWorkspace,
     createWorkspace,
+    deleteWorkspace,
     saveTask,
     updateTask,
     createSubtask,
@@ -102,6 +104,7 @@ export function TaskManager() {
     projectName,
     projectColumns,
   } = useTaskManagerController();
+  const [totpSetupOpen, setTotpSetupOpen] = useState(false);
 
   if (!sessionReady) {
     return (
@@ -137,6 +140,7 @@ export function TaskManager() {
         onWorkspaceChange={(workspaceId) => void switchWorkspace(workspaceId)}
         onNewWorkspaceNameChange={setNewWorkspaceName}
         onCreateWorkspace={() => void createWorkspace()}
+        onDeleteWorkspace={(workspaceId) => void deleteWorkspace(workspaceId)}
         tasks={tasks}
         projects={projects}
         currentUser={currentUser}
@@ -208,6 +212,7 @@ export function TaskManager() {
             <RoleSwitcher
               currentUser={currentUser}
               onManageTeam={() => setTeamModalOpen(true)}
+              onSetupTotp={() => setTotpSetupOpen(true)}
               onLogout={logout}
             />
           }
@@ -286,7 +291,13 @@ export function TaskManager() {
       <ActivityPanel
         open={activityOpen}
         onOpenChange={setActivityOpen}
-        people={PEOPLE}
+        people={users}
+      />
+
+      <TotpSetupDialog
+        open={totpSetupOpen}
+        user={currentUser}
+        onOpenChange={setTotpSetupOpen}
       />
 
       {(newTaskOpen || editingTask) && (
