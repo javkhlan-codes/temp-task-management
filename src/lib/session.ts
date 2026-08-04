@@ -54,6 +54,22 @@ export async function resolveSessionUserId(
   return rows.length ? String(rows[0].user_id) : null;
 }
 
+export async function resolveVerifiedSessionUserId(
+  request: Request,
+  sql: SqlClient,
+): Promise<string | null> {
+  const userId = await resolveSessionUserId(request, sql);
+  if (!userId) return null;
+  const rows = await sql`
+    SELECT 1
+    FROM user_totp
+    WHERE user_id = ${userId}
+      AND verified_at IS NOT NULL
+    LIMIT 1
+  `;
+  return rows.length ? userId : null;
+}
+
 export async function revokeSession(request: Request, sql: SqlClient) {
   const token = getSessionToken(request);
   if (!token) return;

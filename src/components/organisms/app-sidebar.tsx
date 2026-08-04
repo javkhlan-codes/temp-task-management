@@ -91,6 +91,7 @@ type AppSidebarProps = {
   onWorkspaceChange: (workspaceId: string) => void;
   onNewWorkspaceNameChange: (name: string) => void;
   onCreateWorkspace: () => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
   tasks: Task[];
   projects: Project[];
   currentUser: WorkspaceUser;
@@ -118,6 +119,7 @@ function SidebarContent({
   onWorkspaceChange,
   onNewWorkspaceNameChange,
   onCreateWorkspace,
+  onDeleteWorkspace,
   tasks,
   projects,
   currentUser,
@@ -165,6 +167,7 @@ function SidebarContent({
           onWorkspaceChange={onWorkspaceChange}
           onNewWorkspaceNameChange={onNewWorkspaceNameChange}
           onCreateWorkspace={onCreateWorkspace}
+          onDeleteWorkspace={onDeleteWorkspace}
         />
 
         <nav className="pb-[13px]" aria-label="Үндсэн цэс">

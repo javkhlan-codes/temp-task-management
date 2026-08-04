@@ -87,20 +87,9 @@ SELECT
     ELSE '#4a8df6'
   END,
   '',
-  'user-ariuna'
+  (SELECT id FROM users ORDER BY created_at ASC LIMIT 1)
 FROM (SELECT DISTINCT project FROM tasks) legacy_projects
-ON CONFLICT (workspace_id, name) DO NOTHING;
-
-INSERT INTO projects (
-  id, workspace_id, name, color, description, owner_id
-)
-VALUES
-  ('project-product-launch', 'workspace-acme', 'Product launch', '#7c5cff',
-   'Plan, track, and ship the product launch.', 'user-ariuna'),
-  ('project-website-v2', 'workspace-acme', 'Website v2', '#21c8a8',
-   'Website redesign and content migration.', 'user-temuulen'),
-  ('project-mobile-app', 'workspace-acme', 'Mobile app', '#ffb547',
-   'Mobile product delivery and documentation.', 'user-nomin')
+WHERE EXISTS (SELECT 1 FROM users)
 ON CONFLICT (workspace_id, name) DO NOTHING;
 
 INSERT INTO project_members (project_id, user_id)
@@ -135,7 +124,10 @@ WHERE (
   AND tasks.assignee_id IS NULL;
 
 UPDATE tasks
-SET created_by = COALESCE(assignee_id, 'user-ariuna')
+SET created_by = COALESCE(
+  assignee_id,
+  (SELECT id FROM users ORDER BY created_at ASC LIMIT 1)
+)
 WHERE created_by IS NULL;
 
 ALTER TABLE tasks ALTER COLUMN project_id SET NOT NULL;

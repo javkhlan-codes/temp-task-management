@@ -1,12 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import {
-  DEMO_COLUMNS,
-  DEMO_PROJECTS,
-  DEMO_TASKS,
-  WORKSPACE_USERS,
-} from "@/lib/demo-data";
 import { ROLE_LABELS, canEditTask, hasPermission } from "@/lib/permissions";
 import {
   PRIORITY_LABELS,
@@ -25,12 +19,22 @@ import { taskAssignees } from "@/features/task-manager/lib/task-visuals";
 import { useTaskFilters } from "@/features/task-manager/hooks/use-task-filters";
 import { useWorkspaceData } from "@/features/task-manager/hooks/use-workspace-data";
 
-const STORAGE_KEY = "nimbus-tasks-v1";
-const COLUMNS_STORAGE_KEY = "nimbus-columns-v1";
-const USERS_STORAGE_KEY = "nimbus-users-v1";
-const PROJECTS_STORAGE_KEY = "nimbus-projects-v1";
+const STORAGE_KEY = "nimbus-tasks-v2";
+const COLUMNS_STORAGE_KEY = "nimbus-columns-v2";
+const USERS_STORAGE_KEY = "nimbus-users-v2";
+const PROJECTS_STORAGE_KEY = "nimbus-projects-v2";
 
 type PersistenceMode = "loading" | "local" | "database";
+
+const EMPTY_USER: WorkspaceUser = {
+  id: "unassigned",
+  name: "Unassigned",
+  email: "",
+  initials: "?",
+  tone: "slate",
+  role: "viewer",
+  active: false,
+};
 
 function normalizeTask(task: Task): Task {
   return {
@@ -44,13 +48,11 @@ function normalizeTask(task: Task): Task {
 }
 
 export function useTaskManagerController() {
-  const [tasks, setTasks] = useState<Task[]>(DEMO_TASKS);
-  const [columns, setColumns] = useState<CustomColumn[]>(DEMO_COLUMNS);
-  const [projects, setProjects] = useState<Project[]>(DEMO_PROJECTS);
-  const [users, setUsers] = useState<WorkspaceUser[]>(WORKSPACE_USERS);
-  const [currentUser, setCurrentUser] = useState<WorkspaceUser>(
-    WORKSPACE_USERS[0],
-  );
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [columns, setColumns] = useState<CustomColumn[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [users, setUsers] = useState<WorkspaceUser[]>([]);
+  const [currentUser, setCurrentUser] = useState<WorkspaceUser>(EMPTY_USER);
   const {
     workspaces,
     setWorkspaces,
@@ -68,7 +70,7 @@ export function useTaskManagerController() {
   const [mode, setMode] = useState<PersistenceMode>("loading");
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [view, setView] = useState<ViewMode>("list");
-  const [activeProject, setActiveProject] = useState(DEMO_PROJECTS[0].id);
+  const [activeProject, setActiveProject] = useState("All tasks");
   const {
     query,
     setQuery,
@@ -151,7 +153,7 @@ export function useTaskManagerController() {
       setCurrentUser(
         loadedUsers.find((user) => user.id === actorId && user.active) ??
           loadedUsers[0] ??
-          WORKSPACE_USERS[0],
+          EMPTY_USER,
       );
       setMode("database");
       return true;
@@ -221,7 +223,7 @@ export function useTaskManagerController() {
           return;
         }
       } catch {
-        // The local demo remains available when the API or database is offline.
+        // Fall back to the browser's current workspace data when the API is offline.
       }
 
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -263,7 +265,7 @@ export function useTaskManagerController() {
           setCurrentUser(
             localUsers.find((user) => user.id === actorId && user.active) ??
               localUsers[0] ??
-              WORKSPACE_USERS[0],
+              EMPTY_USER,
           );
         } catch {
           localStorage.removeItem(USERS_STORAGE_KEY);
@@ -695,8 +697,65 @@ export function useTaskManagerController() {
     setToast("Багийн гишүүн идэвхгүй боллоо");
   };
 
-  const authenticated = (_user: WorkspaceUser) => {
-    window.location.reload();
+  const authenticated = async (user: WorkspaceUser) => {
+    setCurrentUser(user);
+    setSignedIn(true);
+    setSessionReady(true);
+
+    let selectedWorkspaceId = activeWorkspaceId;
+    try {
+      const workspacesResponse = await fetch("/api/workspaces", {
+        cache: "no-store",
+      });
+      if (workspacesResponse.ok) {
+        const payload = (await workspacesResponse.json()) as {
+          workspaces: WorkspaceSummary[];
+        };
+        if (payload.workspaces.length) {
+          setWorkspaces(payload.workspaces);
+          const savedWorkspaceId = localStorage.getItem("nimbus-workspace-id");
+          selectedWorkspaceId =
+            payload.workspaces.find((item) => item.id === savedWorkspaceId)?.id ??
+            payload.workspaces[0].id;
+          setActiveWorkspaceId(selectedWorkspaceId);
+        }
+      }
+
+      if (!(await loadWorkspaceData(selectedWorkspaceId, user.id))) {
+        setMode("local");
+      }
+    } catch {
+      setMode("local");
+    }
+  };
+
+  const deleteWorkspace = async (workspaceId: string) => {
+    const target = workspaces.find((workspace) => workspace.id === workspaceId);
+    if (!target || target.id === "workspace-acme" || target.role !== "admin") {
+      setToast("Үндсэн workspace эсвэл таны admin биш workspace-ийг устгах боломжгүй");
+      return;
+    }
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}`, {
+        method: "DELETE",
+        headers: { "x-workspace-id": workspaceId },
+      });
+      const payload = (await response.json()) as { ok?: boolean; error?: string };
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "Workspace устгах боломжгүй");
+      }
+
+      const remaining = workspaces.filter((workspace) => workspace.id !== workspaceId);
+      setWorkspaces(remaining);
+      setWorkspaceMenuOpen(false);
+      if (activeWorkspaceId === workspaceId) {
+        const fallback = remaining[0];
+        if (fallback) await switchWorkspace(fallback.id);
+      }
+      setToast("Workspace устгагдлаа");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Workspace устгах боломжгүй");
+    }
   };
 
   const logout = async () => {
@@ -906,6 +965,7 @@ export function useTaskManagerController() {
     setMonth,
     switchWorkspace,
     createWorkspace,
+    deleteWorkspace,
     saveTask,
     updateTask,
     createSubtask,

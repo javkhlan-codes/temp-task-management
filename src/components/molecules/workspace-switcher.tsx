@@ -1,6 +1,17 @@
 "use client";
 
-import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Popover,
   PopoverContent,
@@ -44,6 +55,7 @@ export function WorkspaceSwitcher({
   onWorkspaceChange,
   onNewWorkspaceNameChange,
   onCreateWorkspace,
+  onDeleteWorkspace,
 }: {
   workspaces: WorkspaceSummary[];
   activeWorkspaceId: string;
@@ -54,13 +66,16 @@ export function WorkspaceSwitcher({
   onWorkspaceChange: (workspaceId: string) => void;
   onNewWorkspaceNameChange: (name: string) => void;
   onCreateWorkspace: () => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
 }) {
+  const [deleteTarget, setDeleteTarget] = useState<WorkspaceSummary | null>(null);
   const activeWorkspace =
     workspaces.find((workspace) => workspace.id === activeWorkspaceId) ??
     workspaces[0];
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    <>
+      <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger
         className="my-[22px] mb-[15px] grid w-full grid-cols-[32px_1fr_16px] items-center gap-[9px] rounded-[11px] border border-sidebar-border bg-[var(--sidebar-soft)] p-[9px] text-left text-[var(--sidebar-strong)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
         aria-label="Workspace солих"
@@ -91,26 +106,42 @@ export function WorkspaceSwitcher({
         </div>
         {workspaces.map((workspace) => {
           const active = workspace.id === activeWorkspaceId;
+          const canDelete =
+            workspace.id !== "workspace-acme" && workspace.role === "admin";
           return (
-            <button
+            <div
               className={cn(
-                "grid w-full grid-cols-[29px_1fr_14px] items-center gap-2 rounded-lg bg-transparent p-[7px] text-left text-[var(--text-soft)] hover:bg-surface-soft hover:text-foreground focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-brand-ring",
+                "grid w-full grid-cols-[1fr_auto] items-center rounded-lg bg-transparent text-[var(--text-soft)] hover:bg-surface-soft hover:text-foreground",
                 active && "bg-surface-soft text-foreground",
               )}
-              onClick={() => onWorkspaceChange(workspace.id)}
               key={workspace.id}
             >
-              <WorkspaceLogo name={workspace.name} compact />
-              <span className="min-w-0">
-                <strong className="block overflow-hidden text-[10px] text-ellipsis whitespace-nowrap">
-                  {workspace.name}
-                </strong>
-                <small className="mt-px block text-[8px] text-muted-foreground">
-                  {ROLE_LABELS[workspace.role]}
-                </small>
-              </span>
-              {active && <Check size={14} className="text-brand" />}
-            </button>
+              <button
+                className="grid min-w-0 grid-cols-[29px_1fr_14px] items-center gap-2 bg-transparent p-[7px] text-left focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
+                onClick={() => onWorkspaceChange(workspace.id)}
+              >
+                <WorkspaceLogo name={workspace.name} compact />
+                <span className="min-w-0">
+                  <strong className="block overflow-hidden text-[10px] text-ellipsis whitespace-nowrap">
+                    {workspace.name}
+                  </strong>
+                  <small className="mt-px block text-[8px] text-muted-foreground">
+                    {ROLE_LABELS[workspace.role]}
+                  </small>
+                </span>
+                {active && <Check size={14} className="text-brand" />}
+              </button>
+              {canDelete && (
+                <button
+                  type="button"
+                  className="mr-1 flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
+                  onClick={() => setDeleteTarget(workspace)}
+                  aria-label={`${workspace.name} workspace устгах`}
+                >
+                  <Trash2 size={13} />
+                </button>
+              )}
+            </div>
           );
         })}
         <div className="mt-[5px] grid grid-cols-[1fr_31px] gap-[5px] border-t border-border px-[3px] pt-2 pb-0.5">
@@ -136,7 +167,36 @@ export function WorkspaceSwitcher({
             <Plus size={15} />
           </button>
         </div>
-      </PopoverContent>
-    </Popover>
+        </PopoverContent>
+      </Popover>
+
+      <AlertDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Workspace-ийг бүрмөсөн устгах уу?</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{deleteTarget?.name}” workspace зөвхөн project-гүй, ганц гишүүнтэй үед
+              устна. Энэ үйлдлийг буцаах боломжгүй.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Цуцлах</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (deleteTarget) onDeleteWorkspace(deleteTarget.id);
+              }}
+            >
+              Устгах
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getDatabase } from "@/lib/db";
-import { resolveSessionUserId } from "@/lib/session";
+import { resolveVerifiedSessionUserId } from "@/lib/session";
 import type { WorkspaceSummary } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -39,7 +39,7 @@ export async function GET(request: Request) {
     );
   }
   try {
-    const userId = await resolveSessionUserId(request, sql);
+    const userId = await resolveVerifiedSessionUserId(request, sql);
     if (!userId) {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
@@ -76,7 +76,7 @@ export async function POST(request: Request) {
     );
   }
   try {
-    const userId = await resolveSessionUserId(request, sql);
+    const userId = await resolveVerifiedSessionUserId(request, sql);
     if (!userId) {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }

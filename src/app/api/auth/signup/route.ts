@@ -69,26 +69,35 @@ export async function POST(request: Request) {
     const tone = TONES[Math.floor(Math.random() * TONES.length)];
     const initials = initialsFor(name) || "NM";
     const passwordHash = await hashPassword(password);
+    const membershipRows = await sql`
+      SELECT COUNT(*)::int AS count
+      FROM workspace_members
+      WHERE workspace_id = 'workspace-acme' AND active = TRUE
+    `;
+    const role: WorkspaceUser["role"] =
+      Number(membershipRows[0]?.count ?? 0) === 0 ? "admin" : "member";
 
-    await sql`
-      INSERT INTO users (id, name, email, initials, tone)
-      VALUES (${userId}, ${name}, ${email}, ${initials}, ${tone})
-    `;
-    await sql`
-      INSERT INTO workspace_members (workspace_id, user_id, role, active)
-      VALUES ('workspace-acme', ${userId}, 'member', TRUE)
-    `;
-    await sql`
-      INSERT INTO user_credentials (user_id, password_hash)
-      VALUES (${userId}, ${passwordHash})
-    `;
-    await sql`
-      INSERT INTO project_members (project_id, user_id)
-      SELECT id, ${userId}
-      FROM projects
-      WHERE workspace_id = 'workspace-acme' AND archived = FALSE
-      ON CONFLICT (project_id, user_id) DO NOTHING
-    `;
+    await sql.transaction([
+      sql`
+        INSERT INTO users (id, name, email, initials, tone)
+        VALUES (${userId}, ${name}, ${email}, ${initials}, ${tone})
+      `,
+      sql`
+        INSERT INTO workspace_members (workspace_id, user_id, role, active)
+        VALUES ('workspace-acme', ${userId}, ${role}, TRUE)
+      `,
+      sql`
+        INSERT INTO user_credentials (user_id, password_hash)
+        VALUES (${userId}, ${passwordHash})
+      `,
+      sql`
+        INSERT INTO project_members (project_id, user_id)
+        SELECT id, ${userId}
+        FROM projects
+        WHERE workspace_id = 'workspace-acme' AND archived = FALSE
+        ON CONFLICT (project_id, user_id) DO NOTHING
+      `,
+    ]);
 
     const user: WorkspaceUser = {
       id: userId,
@@ -96,11 +105,14 @@ export async function POST(request: Request) {
       email,
       initials,
       tone,
-      role: "member",
+      role,
       active: true,
     };
     const { token, expiresAt } = await createSession(sql, userId);
-    const response = NextResponse.json({ user }, { status: 201 });
+    const response = NextResponse.json(
+      { user, requiresTotpSetup: true },
+      { status: 201 },
+    );
     setSessionCookie(response, token, expiresAt);
     return response;
   } catch (error) {
