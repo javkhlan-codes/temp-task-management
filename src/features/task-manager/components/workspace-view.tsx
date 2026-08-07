@@ -65,6 +65,8 @@ export function WorkspaceView({
   onEditColumn,
   onCellUpdate,
   onAddTask,
+  onCreateTask,
+  inlineTaskFocusRequest,
   onAddSubtask,
   canAssign,
   canCreate,
@@ -111,6 +113,8 @@ export function WorkspaceView({
     value: CustomFieldValue,
   ) => void;
   onAddTask: () => void;
+  onCreateTask: (title: string, group: string) => void;
+  inlineTaskFocusRequest: number;
   onAddSubtask: (task: Task) => void;
   canAssign: boolean;
   canCreate: boolean;
@@ -264,7 +268,8 @@ export function WorkspaceView({
               columns={columns}
               onEditColumn={onEditColumn}
               onCellUpdate={onCellUpdate}
-              onAdd={onAddTask}
+              onCreate={onCreateTask}
+              focusAddRequest={inlineTaskFocusRequest}
               onAddSubtask={onAddSubtask}
               canAssign={canAssign}
               canCreate={canCreate}

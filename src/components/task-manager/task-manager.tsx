@@ -46,6 +46,7 @@ export function TaskManager() {
     sidebarOpen,
     activityOpen,
     newTaskOpen,
+    inlineTaskFocusRequest,
     editingTask,
     subtaskParent,
     editingColumn,
@@ -90,7 +91,8 @@ export function TaskManager() {
     logout,
     saveProject,
     deleteProject,
-    openNewTask,
+    startNewTask,
+    createInlineTask,
     toggleTheme,
     exportTasksCsv,
     visibleTasks,
@@ -273,7 +275,9 @@ export function TaskManager() {
             }
           }}
           onCellUpdate={updateCustomField}
-          onAddTask={openNewTask}
+          onAddTask={startNewTask}
+          onCreateTask={createInlineTask}
+          inlineTaskFocusRequest={inlineTaskFocusRequest}
           onAddSubtask={(parent) => {
             setSubtaskParent(parent);
             setNewTaskOpen(true);

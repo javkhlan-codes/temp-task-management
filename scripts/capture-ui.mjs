@@ -119,7 +119,8 @@ const clickByText = async (selector, text) => {
 };
 
 if (action === "task-dialog") {
-  await clickByText("button", "Шинэ таск");
+  await evaluate(`document.querySelector('[data-ui="task-row-title"]')?.click()`);
+  await wait(700);
 } else if (action === "project-dialog") {
   await evaluate(`document.querySelector('[aria-label="Төсөл үүсгэх"]')?.click()`);
   await wait(700);
@@ -144,7 +145,8 @@ if (action === "task-dialog") {
   );
   await wait(700);
 } else if (action === "task-dialog-status") {
-  await clickByText("button", "Шинэ таск");
+  await evaluate(`document.querySelector('[data-ui="task-row-title"]')?.click()`);
+  await wait(700);
   await evaluate(
     `document.querySelector('[aria-label="Төлөв"]')?.click()`,
   );

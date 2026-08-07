@@ -142,11 +142,16 @@ check(
   ),
 );
 await clickText('[data-slot="tabs-trigger"]', "Нэвтрэх");
-await clickText("button", "Temuulen E.");
+await click("#login-email");
+await send("Input.insertText", { text: "temuulen@acme.mn" });
+await click("#login-password");
+await send("Input.insertText", { text: "nimbus" });
 check(
-  "Demo account selection updates credentials",
+  "Login credentials accept keyboard input",
   (await evaluate(`document.querySelector("#login-email")?.value`)) ===
-    "temuulen@acme.mn",
+    "temuulen@acme.mn" &&
+    (await evaluate(`document.querySelector("#login-password")?.value`)) ===
+      "nimbus",
 );
 await click('[data-slot="checkbox"]');
 check(
@@ -298,7 +303,48 @@ for (const [label, selector] of [
 }
 await clickText('[data-slot="tabs-trigger"]', "Жагсаалт");
 
+const inlineTaskTitle = `Inline UI verification ${Date.now()}`;
 await clickText("button", "Шинэ таск");
+await waitFor(
+  `document.activeElement?.matches('[data-ui="inline-task-title"]')`,
+);
+const inlineCreateState = await evaluate(`({
+  focused: document.activeElement?.matches('[data-ui="inline-task-title"]'),
+  dialogOpen: Boolean(document.querySelector('[data-slot="dialog-content"]')),
+  viewVisible: Boolean(document.querySelector('[data-ui="task-list"]'))
+})`);
+check(
+  "New task action focuses inline creation without opening a dialog",
+  inlineCreateState.focused &&
+    !inlineCreateState.dialogOpen &&
+    inlineCreateState.viewVisible,
+  JSON.stringify(inlineCreateState),
+);
+await send("Input.insertText", { text: "Цуцлах draft" });
+await press("Escape");
+check(
+  "Escape clears an unfinished inline task",
+  (await evaluate(`document.activeElement?.value`)) === "",
+);
+await send("Input.insertText", { text: inlineTaskTitle });
+await press("Enter");
+await waitFor(
+  `[...document.querySelectorAll('[data-ui="task-row-title"]')]
+    .some((element) => element.textContent?.trim() === ${JSON.stringify(inlineTaskTitle)})`,
+);
+const inlineSubmitState = await evaluate(`({
+  created: [...document.querySelectorAll('[data-ui="task-row-title"]')]
+    .some((element) => element.textContent?.trim() === ${JSON.stringify(inlineTaskTitle)}),
+  cleared: document.activeElement?.matches('[data-ui="inline-task-title"]') &&
+    document.activeElement.value === ""
+})`);
+check(
+  "Enter creates a task inline and keeps the input ready",
+  inlineSubmitState.created && inlineSubmitState.cleared,
+  JSON.stringify(inlineSubmitState),
+);
+
+await clickText('[data-ui="task-row-title"]', inlineTaskTitle);
 await waitFor(`Boolean(document.querySelector('[data-slot="dialog-content"]'))`);
 const dialogInitialFocus = await evaluate(
   `document.querySelector('[data-slot="dialog-content"]')?.contains(document.activeElement)`,
@@ -341,6 +387,19 @@ check(
   !(await evaluate(
     `Boolean(document.querySelector('[data-slot="dialog-content"]'))`,
   )),
+);
+
+// Remove the task created by this verification run so persistent workspaces stay clean.
+await clickText('[data-ui="task-row-title"]', inlineTaskTitle);
+await waitFor(`Boolean(document.querySelector('[data-slot="dialog-content"]'))`);
+await clickText('[data-slot="dialog-content"] button', "Устгах");
+await waitFor(
+  `Boolean(document.querySelector('[data-slot="alert-dialog-content"]'))`,
+);
+await click('[data-slot="alert-dialog-action"]');
+await waitFor(
+  `![...document.querySelectorAll('[data-ui="task-row-title"]')]
+    .some((element) => element.textContent?.trim() === ${JSON.stringify(inlineTaskTitle)})`,
 );
 
 const unlabeledIconButtons = await evaluate(`(() =>

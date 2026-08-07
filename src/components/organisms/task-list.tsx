@@ -6,13 +6,13 @@ import {
   ChevronRight,
   ListTree,
   MoreHorizontal,
-  Plus,
   UserPlus,
 } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useState } from "react";
 import { AssigneePicker } from "@/components/molecules/assignee-picker";
 import { EmptyState } from "@/components/molecules/empty-state";
+import { InlineTaskCreateRow } from "@/components/molecules/inline-task-create-row";
 import { PrioritySelect } from "@/components/molecules/priority-select";
 import { StatusSelect } from "@/components/molecules/status-select";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -48,7 +48,8 @@ export function TaskList({
   onUpdate,
   onEditColumn,
   onCellUpdate,
-  onAdd,
+  onCreate,
+  focusAddRequest,
   onAddSubtask,
   canAssign,
   canCreate,
@@ -64,7 +65,8 @@ export function TaskList({
     columnId: string,
     value: CustomFieldValue,
   ) => void;
-  onAdd: () => void;
+  onCreate: (title: string, group: string) => void;
+  focusAddRequest: number;
   onAddSubtask: (parent: Task) => void;
   canAssign: boolean;
   canCreate: boolean;
@@ -74,9 +76,11 @@ export function TaskList({
   );
   const rootTasks = tasks.filter((task) => !task.parentId);
   const groups = ["This week", "Upcoming", "Completed"];
-  const usedGroups = groups.filter((group) =>
+  const populatedGroups = groups.filter((group) =>
     rootTasks.some((task) => task.group === group),
   );
+  const usedGroups =
+    populatedGroups.length || !canCreate ? populatedGroups : [groups[0]];
   const gridStyle = {
     "--task-grid": `27px minmax(240px, 1.6fr) minmax(130px, .8fr) 128px 100px 91px ${columns
       .map(() => "130px")
@@ -86,7 +90,7 @@ export function TaskList({
     minWidth: `${790 + columns.length * 130}px`,
   };
 
-  if (!tasks.length) return <EmptyState onAdd={onAdd} />;
+  if (!tasks.length && !canCreate) return <EmptyState />;
 
   return (
     <div
@@ -123,7 +127,7 @@ export function TaskList({
           ))}
           <span />
         </div>
-        {usedGroups.map((group) => {
+        {usedGroups.map((group, groupIndex) => {
           const groupTasks = rootTasks.filter((task) => task.group === group);
           return (
             <div key={group}>
@@ -197,15 +201,13 @@ export function TaskList({
                 );
               })}
               {canCreate && (
-                <button
-                  className="flex h-9 w-full items-center bg-transparent px-14 text-left text-[9.5px] text-muted-foreground hover:bg-surface-soft hover:text-brand focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-brand-ring max-nav:pl-[45px]"
-                  onClick={onAdd}
-                >
-                  <span className="mr-1.5 flex">
-                    <Plus size={14} />
-                  </span>
-                  Таск нэмэх
-                </button>
+                <InlineTaskCreateRow
+                  group={group}
+                  gridStyle={gridStyle}
+                  focusRequest={focusAddRequest}
+                  shouldFocus={groupIndex === 0}
+                  onCreate={onCreate}
+                />
               )}
             </div>
           );
@@ -300,6 +302,7 @@ function TaskRow({
           onClick={() => onEdit(task)}
         >
           <span
+            data-ui="task-row-title"
             className={cn(
               "block overflow-hidden text-[11px] font-semibold text-ellipsis whitespace-nowrap",
               isSubtask && "font-medium",

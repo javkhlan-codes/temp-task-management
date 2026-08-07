@@ -95,6 +95,7 @@ export function useTaskManagerController() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
+  const [inlineTaskFocusRequest, setInlineTaskFocusRequest] = useState(0);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [subtaskParent, setSubtaskParent] = useState<Task | null>(null);
   const [editingColumn, setEditingColumn] = useState<CustomColumn | "new" | null>(
@@ -823,7 +824,7 @@ export function useTaskManagerController() {
     setToast("Төсөл устгагдлаа");
   };
 
-  const openNewTask = () => {
+  const startNewTask = () => {
     if (!hasPermission(currentUser, "createTask")) {
       setToast(`${ROLE_LABELS[currentUser.role]} нь зөвхөн унших эрхтэй`);
       return;
@@ -833,7 +834,41 @@ export function useTaskManagerController() {
       setEditingProject("new");
       return;
     }
-    setNewTaskOpen(true);
+    setView("list");
+    setInlineTaskFocusRequest((current) => current + 1);
+  };
+
+  const createInlineTask = (title: string, group: string) => {
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+    const selectedProject =
+      projects.find(
+        (project) => project.id === activeProject && !project.archived,
+      ) ?? projects.find((project) => !project.archived);
+    if (!selectedProject) {
+      setToast("Эхлээд төсөл үүсгэнэ үү");
+      setEditingProject("new");
+      return;
+    }
+
+    saveTask({
+      title: nextTitle,
+      description: "",
+      projectId: selectedProject.id,
+      project: selectedProject.name,
+      group,
+      status: "Not started",
+      priority: "Medium",
+      assignee: currentUser,
+      assignees: [currentUser],
+      parentId: null,
+      dependencyIds: [],
+      recurrence: "none",
+      dueDate: new Date().toISOString().slice(0, 10),
+      tags: [],
+      progress: 0,
+      customFields: {},
+    });
   };
 
   const toggleTheme = () => {
@@ -936,6 +971,7 @@ export function useTaskManagerController() {
     sidebarOpen,
     activityOpen,
     newTaskOpen,
+    inlineTaskFocusRequest,
     editingTask,
     subtaskParent,
     editingColumn,
@@ -980,7 +1016,8 @@ export function useTaskManagerController() {
     logout,
     saveProject,
     deleteProject,
-    openNewTask,
+    startNewTask,
+    createInlineTask,
     toggleTheme,
     exportTasksCsv,
     visibleTasks,
