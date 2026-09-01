@@ -64,9 +64,8 @@ export function NotificationCenter({
 
   useEffect(() => {
     void load();
-    if (mode !== "database") return;
-    const timer = window.setInterval(() => void load(), 30_000);
-    return () => window.clearInterval(timer);
+    // TODO: re-enable 30s polling once Neon compute-hour quota headroom is
+    // confirmed. Constant polling kept compute awake and burned quota fast.
   }, [load, mode]);
 
   const markRead = async (ids?: string[]) => {
